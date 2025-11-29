@@ -1,0 +1,3631 @@
+
+2-Day Prototype Implementation Guide: Local “Virtual Medical Scribe”
+This guide outlines how to build a virtual medical scribe prototype in 2 days using open-source, local tools. The prototype will convert a doctor-patient conversation into a structured medical note, combining speech-to-text transcription (OpenAI’s Whisper), a fine-tuned LLM (Mistral 7B via Ollama) for text generation, and rule-based logic for validation. We emphasize a fully local setup (for privacy) using modest hardware (e.g. a single GPU or even CPU, ~16–32 GB RAM). Below, we detail the environment setup, pipeline components, implementation steps with code snippets, testing methodology, and future evolution.
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="metrics-container">
+  <div class="metric-card">
+    <h4>Prototype Timeline</h4>
+    <div class="metric-card-value">2 days</div>
+    <p>Design, implement & test core features in a weekend</p>
+  </div>
+  <div class="metric-card">
+    <h4>Hardware</h4>
+    <div class="metric-card-value">≈ 16&nbsp;GB RAM</div>
+    <p>Runs on a single GPU (or CPU fallback)</p>
+  </div>
+  <div class="metric-card">
+    <h4>LLM Model</h4>
+    <div class="metric-card-value">Mistral&nbsp;7B</div>
+    <p>Efficient open-source model via Ollama</p>
+  </div>
+  <div class="metric-card">
+    <h4>Transcription</h4>
+    <div class="metric-card-value">Whisper</div>
+    <p>Accurate speech-to-text, multi-language</p>
+  </div>
+
+
+1. Environment Setup (Day 1 Morning)
+Install dependencies and tools:
+
+Ollama (LLM runtime) – Ollama is an open-source engine to run LLMs locally (analogous to Docker for models). Install it on your machine (supports macOS, Linux, Windows). For example:macOS: brew install ollama
+Linux: curl -sS https://ollama.ai/install.sh | bash
+Ensure the Ollama service is running (on macOS, brew services start ollama or run any ollama command).
+Pull an LLM model – We’ll use Mistral 7B (powerful yet lightweight 7B-parameter model) as our language model. Download it via Ollama:
+
+ollama pull mistral
+
+ This fetches the model weights. (Alternatively, you could use Llama-2 7B or another open model. Note: A 7B model typically needs ~16 GB RAM for inference, which fits our hardware target.)
+
+Python libraries – We’ll write the pipeline in Python. Install required packages:
+
+
+
+
+transformers – Hugging Face Transformers for Whisper (speech recognition) and possibly any NLP utilities.
+ollama – Python SDK to interact with the local Ollama server.
+whisper – OpenAI’s Whisper model wrapper (optional; we could also use Transformers for Whisper).
+soundfile or torchaudio – For reading audio files (Whisper can accept file paths directly, but having a library for audio I/O is useful).
+Verify installations:Run ollama list to see available models (should list mistral if pulled). Or use Python:
+
+import ollama
+print(ollama.models())  # list installed models
+
+
+Test Transformers/Whisper:
+
+from transformers import pipeline
+transcriber = pipeline(task="automatic-speech-recognition", model="openai/whisper-tiny")
+
+ If this runs without error, the environment is set.
+
+2. Prototype Pipeline Architecture
+We design a pipeline with four stages, each handled by a separate module:
+
+Speech-to-Text Transcription (ASR) – Convert doctor-patient dialogue audio into text using Whisper.
+Information Extraction – Parse the raw transcript to identify key medical info (e.g. symptoms, meds, allergies).
+LLM Prompting & Note Generation – Feed the transcript (and extracted info) into a local LLM (Mistral-7B) to generate a structured medical note (e.g. SOAP format).
+Rule-Based Validation – Apply domain rules to the generated note to catch errors (e.g. contraindications, missing sections).
+Each component is modular, so they can be improved or replaced independently. Importantly, all processing is local: audio and text data never leave the machine, preserving patient privacy.
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="insights-container">
+  <div class="insight-card">
+    <h4>🎤 Whisper ASR</h4>
+    <p>Using OpenAI’s Whisper model for transcription. It’s robust to medical jargon without fine-tuning and supports multilingual speech. This ensures we capture the conversation accurately for the next steps.</p>
+  </div>
+  <div class="insight-card">
+    <h4>🔍 Extraction & Logic</h4>
+    <p>Simple text processing to find crucial entities (medications, symptoms, etc.) and cross-check them against medical rules. This neuro-symbolic touch provides a safety net (e.g., flagging an allergy conflict) that pure LLMs might miss.</p>
+  </div>
+  <div class="insight-card">
+    <h4>🤖 Local LLM (Mistral)</h4>
+    <p>Mistral 7B, running via Ollama, generates the draft note. It’s an open model we control fully, which we can <strong>fine-tune</strong> or prompt-engineer as needed. Running it locally via Ollama ensures fast, offline inference.</p>
+  </div>
+  <div class="insight-card">
+    <h4>✅ Validation</h4>
+    <p>We verify the LLM’s output meets requirements: correct structure (sections present), consistency with the conversation (no hallucinated info), and compliance with simple medical rules. This boosts reliability for real-world use.</p>
+  </div>
+
+
+3. Implementation Steps (Day 1 Afternoon – Day 2)
+We now implement each pipeline component with code, and then integrate them.
+3.1 Speech Transcription Module
+We use the Hugging Face Transformers pipeline for Whisper (which wraps the model and processing in one call). Whisper has various model sizes; to balance speed and accuracy, we’ll use base or small for the prototype. (Larger models yield better transcripts but need more resources.)
+Code – Transcription (Whisper via Transformers):
+from transformers import pipeline
+
+# Load Whisper model (medium sized for English; adjust model name for different size or language)
+transcriber = pipeline(
+    task="automatic-speech-recognition",
+    model="openai/whisper-medium",
+    device=0  # use GPU 0 if available, otherwise remove this param to use CPU
+)
+
+This loads the Whisper model. The first time, it will download weights (~1.5GB for medium). Whisper works out-of-the-box (pretrained on 680k hours of diverse data) so we don’t need to fine-tune it for our task.
+Now, transcribe an audio file (WAV/MP3/FLAC) of a consultation:
+audio_path = "sample_consultation.wav"
+result = transcriber(audio_path)
+transcript_text = result['text']
+print(transcript_text)
+
+If using a GPU, we cast to half-precision (dtype=torch.float16) for speed. In our example, transcript_text will contain the entire conversation in text form. For instance:
+Transcript output (example):\ “Doctor: Hello, what brings you in today?\ Patient: I’ve had a sore throat for a week and I'm allergic to penicillin.\ Doctor: Understood. Any fever? …”
+(In practice, Whisper may include punctuation and speaker tags if prompted; we can post-process the text as needed.)
+3.2 Information Extraction & Rule Logic
+Next, we analyze the transcript_text to extract key entities:
+
+Medications mentioned (e.g. “penicillin”)
+Allergies (e.g. “allergic to penicillin”)
+Symptoms and duration (e.g. “sore throat for a week”)
+For a 2-day prototype, we can use simple regex or keyword matching for these. For example, find phrases like “allergic to X” or look for known drug names. In production, we’d use a medical NER (possibly fine-tuned) for higher accuracy, but simple rules suffice for now.
+We also define a basic rule: If an allergy to a drug is mentioned, ensure that drug (or its class) is not prescribed in the note. This will be our example rule-based check.
+Code – Extraction and Rule Check:
+import re
+
+transcript_text = transcript_text.lower()  # simplify matching by lower-casing
+
+# Extract allergy information
+allergy_match = re.search(r"allergic to ([\w\s]+)", transcript_text)
+allergy_substance = allergy_match.group(1).strip() if allergy_match else None
+
+# Extract mentioned medications (e.g., ones patient is taking or doctor considers)
+# Simple approach: a predefined list of drugs or looking for keywords like "aspirin", "penicillin", etc.
+meds_mentioned = []
+for drug in ["penicillin", "ibuprofen", "amoxicillin", "aspirin"]:
+    if drug in transcript_text:
+        meds_mentioned.append(drug)
+meds_mentioned = list(set(meds_mentioned))  # unique
+
+print("Allergy:", allergy_substance, " Meds discussed:", meds_mentioned)
+
+# Define a rule violation flag
+violation = False
+if allergy_substance:
+    for med in meds_mentioned:
+        # If a med that is mentioned is the allergen or in the same family:
+        if allergy_substance in med or med in allergy_substance:
+            violation = True
+            rule_issue = f"Allergy to {allergy_substance} noted, but {med} was discussed/prescribed."
+            break
+
+In a real case, we’d need a mapping of drug families (e.g. penicillin allergy should flag amoxicillin as well – in code we could list penicillin-class antibiotics). For our prototype, the regex captures a single allergen, and we simply check if that exact name appears in meds.
+(Example: from the transcript above, allergy_substance = "penicillin", meds_mentioned = ["penicillin"]. So the rule would flag if the note tries to prescribe penicillin.)
+3.3 LLM Prompting and Note Generation
+Now the core: use the LLM to generate a structured medical note from the conversation. We run the model via Ollama’s Python API for convenience.
+Why Ollama? It gives an easy interface to local models. We already pulled Mistral 7B with Ollama. The Python package lets us call ollama.generate(model="mistral", prompt=...) to get a response. Under the hood, Ollama uses optimized inference (possibly llama.cpp) so a 7B model can even run on CPU if needed, albeit slower.
+First, craft the prompt for the model. We need to guide it to produce a structured note. A common format is SOAP (Subjective, Objective, Assessment, Plan) or a simpler summary with sections (Findings, Diagnosis, Recommendation). We will include the conversation and explicitly ask for a note.
+Prompt Design: We use a few-shot style: provide an example of how to write the note, or at least a clear instruction. For simplicity, we might do:
+SYSTEM: You are an assistant that turns doctor-patient conversations into medical notes. Always include sections for "Subjective", "Objective", "Assessment", "Plan".    USER: [Here we insert the transcript text]    ASSISTANT: (the model should output the note)
+We’ll incorporate our extracted data as well, perhaps emphasizing any allergies so the model doesn’t ignore them.
+Code – Prompt and Generate Note:
+import ollama
+
+# Formulate prompt with instruction and transcript
+system_prompt = ("You are a medical scribe assistant. Read the conversation below and produce a concise, structured medical note "
+                "with headings for Subjective, Objective, Assessment, and Plan. Use formal clinical language. ")
+if allergy_substance:
+    system_prompt += f"Note any allergies (patient is allergic to {allergy_substance}). "
+
+user_prompt = f"Conversation:\n{transcript_text}\n\nMedical Note:"
+full_prompt = system_prompt + "\n" + user_prompt
+
+# Generate note with Mistral via Ollama
+result = ollama.generate(model='mistral', prompt=full_prompt)
+generated_note = result['response']
+print("Generated Note:\n", generated_note)
+
+When this runs, Ollama will ensure the mistral model is loaded (the first call may take a few seconds as it initializes). The generated_note should contain the AI’s attempt at the note. For example, it might look like:
+Subjective:
+
+Patient reports a sore throat for 1 week. Denies fever or cough.
+Allergies: Penicillin (patient states allergy).
+Objective:
+
+Throat examination: Redness in the pharynx, no tonsillar exudate.
+Vital signs: Temp 37.0°C, BP 120/80.
+Assessment:
+
+Pharyngitis, likely viral. Pain is moderate, patient able to swallow liquids.
+Plan:
+
+Advise saltwater gargles and hydration.
+Prescribed acetaminophen for pain relief.
+Note: Avoid penicillin antibiotics due to allergy.
+Follow-up if symptoms worsen or persist beyond 10 days.
+(We expect the model to produce something along those lines. Being a small model, it might not perfectly follow the format on first try – we can adjust the prompt or give an example format if needed. The key is that it includes the critical info from the conversation.)
+3.4 Rule-Based Validation & Final Output
+After generation, we apply our rule check. If our violation flag was set (e.g., the note prescribes a drug the patient is allergic to), we can act. In a real system, we might automatically remove that line or add a warning. For the prototype, we’ll just annotate the output or log a warning.
+Code – Validate output note:
+if violation:
+    print("WARNING:", rule_issue)
+    # For the prototype, also append a warning in the note text:
+    generated_note += f"\n\n⚠️ {rule_issue}"
+
+We also do a simple structural validation: ensure the note contains the expected sections (Subjective, Objective, etc.):
+required_sections = ["Subjective:", "Objective:", "Assessment:", "Plan:"]
+for sec in required_sections:
+    if sec not in generated_note:
+        print(f"[Validation] Section '{sec}' is MISSING from the note.")
+
+If a section is missing, it indicates the model didn’t follow format perfectly – in a hackathon setting, we might tweak the prompt or just acknowledge this and manually adjust. (Alternatively, one could post-process: e.g., if “Plan:” is missing, add “Plan: - \[to be filled]” at the end.)
+At this stage, we have a complete pipeline: audio -> text -> structured note -> validated note. We can wrap these steps into a single script or function for convenience.
+3.5 End-to-End Integration
+Combine everything into a script run_scribe.py (for example) that takes an audio file and produces the final note:
+def generate_medical_note_from_audio(audio_path):
+    # 1. Transcription
+    transcript = transcriber(audio_path)['text']
+    # 2. Extraction & rules
+    allergy_match = re.search(r"allergic to ([\w\s]+)", transcript.lower())
+    allergy = allergy_match.group(1).strip() if allergy_match else None
+    meds = [drug for drug in ["penicillin","amoxicillin","ibuprofen","aspirin"] if drug in transcript.lower()]
+    violation = False; issue = ""
+    if allergy:
+        for med in meds:
+            if allergy in med or med in allergy:
+                violation = True
+                issue = f"Allergy to {allergy} noted, but {med} mentioned."
+                break
+    # 3. LLM Generation
+    sys_prompt = "You are a medical scribe... (same as above)" 
+    if allergy: sys_prompt += f"(Patient allergic to {allergy}). "
+    usr_prompt = f"Conversation:\n{transcript}\n\nMedical Note:"
+    full_prompt = sys_prompt + "\n" + usr_prompt
+    note = ollama.generate(model='mistral', prompt=full_prompt)['response']
+    # 4. Validation
+    if violation:
+        note += f"\n⚠️ {issue}"
+    for sec in ["Subjective:", "Objective:", "Assessment:", "Plan:"]:
+        if sec not in note:
+            note += f"\n⚠️ Missing section: {sec}"
+    return note
+
+# Example usage:
+final_note = generate_medical_note_from_audio("sample_consultation.wav")
+print(final_note)
+
+This function orchestrates the whole pipeline. Note: In a real deployment, you’d factor in error handling (e.g., if ASR fails or Ollama server is not running) and perhaps optimize by reusing the loaded models between calls.
+4. Testing the Prototype (Day 2 Afternoon)
+With everything in place, we need to test the pipeline on a sample scenario and verify it works as expected.
+Test scenario: Create or obtain a short audio of a mock consultation. For instance, a 1-minute dialogue where the patient describes a simple ailment and mentions an allergy. (You can record yourself playing both roles, or use text-to-speech to generate an audio from a written script.)
+Example script for testing:\ Doctor: "Hello, what can I do for you?"\ Patient: "I have had a bad cough and fever for 3 days. I’m allergic to aspirin."\ Doctor: "Understood. Any chest pain?" … (and so on, finish with a diagnosis of viral infection and plan)
+Save this as sample_consultation.wav. Then run final_note = generate_medical_note_from_audio("sample_consultation.wav").
+What to check:
+
+Transcription accuracy: Print transcript (or intermediate results) to see if Whisper correctly captured the conversation. If there are minor errors (e.g., “3 days” heard as “three days” – that’s fine). If it missed a key fact (like the allergy), that’s a problem to address (maybe try a larger Whisper model or clearer audio).
+Entities extraction: In our logs, see that allergy_substance and meds_mentioned were correctly identified (e.g., “aspirin” as allergy, and any drug doctor mentions, if any).
+LLM output quality: Does the generated_note make sense? Does it include the major complaint (cough, fever), the allergy, and a plan? It should ideally not introduce unrelated information (no hallucinations). Since our model is running fully offline and was prompted with only the convo, any detail in the note should trace back to the transcript. If you notice any invented detail, that’s a hallucination – in a 7B model test, this is possible if the prompt isn’t tight. In such case, you can strengthen the instruction (e.g., “Only include information provided by patient or doctor. Do not assume facts not stated.”).
+Format & sections: Confirm the note has the 4 sections. Our validation code will append warnings if any are missing. For the hackathon demo, it’s okay if, say, “Objective” is empty for now, as long as we call it out. We can explain that with more time, we’d enforce a template or do post-processing to ensure each section is filled.
+Rule enforcement: If our test included an allergy, check that the Plan did not accidentally recommend the allergen. For instance, if the patient is allergic to aspirin, the note’s Plan should not include aspirin. If it did, our violation flag would be true and a warning “⚠️ Allergy to aspirin noted, but aspirin was mentioned” would appear at the end. This demonstrates our system caught a potential error – a nice touch for the demo.
+We can also write simple functional tests in code:
+assert "Patient" in transcript_text or "patient" in transcript_text  # transcript contains content
+assert "Assessment:" in final_note and "Plan:" in final_note        # note has key sections
+if "allergic to" in transcript_text:
+    assert "Allerg" in final_note                                  # note mentions allergies if any in transcript
+
+These ensure that, for example, any allergy mentioned in conversation is reflected in the note. We could add more, like checking that every symptom reported is in the note (perhaps by keyword). In practice manual review is needed for quality, but these automated checks give quick feedback during development.
+5. Validation Strategy
+Beyond functional tests, consider a strategy to measure the prototype’s performance:
+
+Transcription quality: Calculate Word Error Rate (WER) by comparing Whisper’s output to a manual transcript of the audio. For our short sample, we can eyeball it. If we had a dataset of doctor-patient recordings with transcripts, we could use that to quantitatively evaluate ASR accuracy.
+Medical accuracy: Create a few test scenarios (different symptoms, different allergies/meds) and verify the notes cover the vital information. We might score each generated note on completeness (did it capture all complaints, findings, and plans mentioned?) and correctness (no incorrect medical statements, no hallucinations beyond the input).
+Hallucination check: Because we control the input fully, we can check if any content in output wasn’t present or implied. Our simple extraction cross-check helps here: for each medication or diagnosis in the note, confirm it was mentioned by doctor or patient. If the note contains “Prescribed amoxicillin” but the patient never agreed or doctor never said that, that’s a hallucination or an unjustified assumption (maybe the model “assumed” an antibiotic prescription). In a demo, we’d point out this issue and note it could be fixed by fine-tuning the model or adding more explicit constraints in the prompt.
+Rule-based scenarios: Test edge cases for our rules, e.g., no allergy (the note should be straightforward), vs allergy present (the note should reflect it and our warning triggers if not handled). This shows the added value of the symbolic component: even if the LLM slips, we catch it.
+Because this is a prototype, some leniency is fine. The goal is to show it works on the happy path and that we have a plan to address errors.
+6. Potential Evolution (Tech Vision)
+In just 2 days, we get a working demo of an AI scribe that highlights key capabilities. With more time, this prototype can evolve significantly:
+
+Enhanced Fine-Tuning: Currently, Mistral 7B is used largely out-of-the-box (apart from our prompt). We could apply LoRA fine-tuning on a small set of example consultations and notes to teach the model the desired style and structure. QLoRA in particular would let us fine-tune efficiently on a single GPU. This would reduce the need for prompt engineering and likely improve the coherence of the notes.
+Larger/Better Models: As resources allow, we could swap in a more powerful LLM (LLaMA-2 13B, or a medicine-specific model like GPT4All Healthcare). The Ollama setup makes this easy – just ollama pull a new model and change the model name. Because Ollama is flexible, even scaling up to 70B models or running multiple models (for ensemble or specialized tasks) is possible when hardware is available.
+Integration with EHR systems: The output note can be structured in JSON or FHIR format to directly integrate into Electronic Health Record software. For example, we could map sections to specific fields (Assessment -> Diagnosis ICD code, Plan -> orders and prescriptions). In a next iteration, our code could call an API or database to log the note. This would turn the prototype into a functional assistant in a clinical workflow.
+Personalization: Each doctor has a preferred style or might want certain phrases. We can allow the user to provide feedback or small edits on the generated note and use reinforcement learning from human feedback (RLHF) to adjust the model. For instance, if the doctor always writes “Dx:” instead of “Assessment:”, the system could learn to adapt. Storing a few corrected outputs and fine-tuning the model (or a lightweight adapter) on them would implement this personalization over time.
+Multilingual support: Whisper already handles multiple languages. If doctors or patients speak languages other than English (e.g., Spanish in Southern US, French in parts of Canada, etc.), the pipeline can transcribe those. We’d need a multilingual or language-specific LLM for note generation (or translate the transcript to English for the LLM, then output note back in the original language if required). The open-source ecosystem has models in many languages, and we could maintain separate fine-tuned versions per language if needed.
+Additional AI capabilities: We could incorporate a medical knowledge base or diagnosis API to augment the Assessment. E.g., if unsure of a drug dosage, the assistant could query a local formulary (since Ollama can call functions or we can add a step to use an external library). This starts entering the agentic AI realm – e.g., using LangChain or similar, we could have the LLM request a “lookup” operation for drug information. Since Ollama supports function calling in principle, we could extend the system to not just scribe but also suggest next steps, check drug interactions (beyond our simple rule), etc.
+Vision: Ultimately, this prototype could become a production-grade AI medical scribe that saves doctors time on documentation, improves accuracy (through consistent note structure and checks), and maintains privacy (since everything runs on the hospital’s local servers, no data is sent out). The architecture is scalable: for instance, multiple instances of the pipeline could run on hospital hardware for multiple exam rooms simultaneously. As open-source models get better (e.g., Mistral 7B’s successors or LLaMA 3), we can upgrade the brain of the system with minimal changes.
+The key differentiators we’d pitch are:
+
+Privacy by design: All processing is local (no cloud) – crucial for patient data.
+Flexibility: Every component is open-source and modifiable – one can fine-tune the model, adjust rules, integrate with any IT system.
+Tangible time savings: Show a before/after of documentation time. Even in our test, if a note is drafted in seconds and needs just a quick review, that’s a big win.
+7. Components & Installation Summary
+Finally, here’s a summary of the main components used in this prototype, their roles, and how to set them up:
+
+Component	Role in Pipeline	Installation/Setup
+Ollama – LLM runtime	Hosts and serves local LLMs (Mistral, LLaMA). Simplifies running the model offline.	brew install ollama (macOS) or official script (Linux). Start the Ollama service (runs on port 11434 by default).
+Mistral 7B model	Core large language model generating the medical note text. Selected for good performance vs size.	ollama pull mistral – downloads the model weights into Ollama’s store. (For LLaMA-2: ollama pull llama2 etc.) Ensure ~8–16GB RAM available to load it.
+OpenAI Whisper (via HF Transformers)	Automatic Speech Recognition – transcribes audio to text. Chosen for accuracy on clinical speech without fine-tuning.	pip install transformers torch (for pipeline) and download model on first use. (Optionally pip install whisper for OpenAI’s version). No additional config – runs on CPU/GPU.
+Python Ollama SDK	Python library to call Ollama’s API from code (send prompts to model, get responses).	pip install ollama. (Ollama service must be running in background.) Use ollama.generate() in Python to get model outputs.
+Regex/Rule logic (Python stdlib)	Simple rule-based checking (find “allergic to X”, etc.) and enforcement of do-not-prescribe rules.	(Included in Python 3). We used re for regex. No special install. For complex medical NLP, could install spaCy or similar, but not needed in this prototype.
+Audio I/O (soundfile, pydub)	Reading audio files for transcription, and potential audio pre-processing (e.g., conversion to 16k mono).	pip install soundfile pydub (if needed). In our code, Whisper pipeline can accept a file path directly, so this is mostly optional.
+Test Audio (sample_consultation.wav)	Simulated doctor-patient conversation to test the pipeline end-to-end.	Record manually or use TTS. Ensure clear audio (16 kHz WAV recommended). Not an installable component, but a necessary input for testing.
+
+With this setup and guide, you should be able to reproduce the 2-day prototype. Run the pipeline on the sample scenario, observe the output, and iterate as needed. By following these steps, we demonstrated the viability of a local AI scribe and laid the groundwork for a more advanced solution that could one day assist clinicians in real-world settings – saving time, improving documentation, and keeping data private.
+
+Pour exécuter efficacement ce projet de scribe médical virtuel sur un environnement local (type Windows avec WSL2 ou Linux/macOS), voici un guide d’installation et d’exécution optimisé pour le windsurf (i.e. une configuration légère, rapide à mettre en place, et adaptée à un hackathon ou un test rapide).
+
+
+
+
+
+
+🛠️ Guide d’exécution rapide (mode « windsurf »)
+1. Pré-requis système
+
+💻 Machine avec :16–32 Go de RAM
+GPU (NVIDIA avec CUDA) recommandé, mais fonctionne aussi en CPU
+OS : Linux, macOS ou Windows avec WSL2
+🐍 Python 3.9+
+🐳 Docker (si vous utilisez Ollama via conteneur)
+🎙️ Un fichier audio .wav de consultation simulée (ex. consultation.wav)
+
+
+2. Installation rapide
+a. Installer Ollama (LLM local)
+# Linux
+curl -sS https://ollama.ai/install.sh | bash
+
+# macOS
+brew install ollama
+
+# Vérifier l’installation
+ollama --version
+
+b. Télécharger le modèle Mistral
+ollama pull mistral
+
+
+💡 Vous pouvez aussi utiliser llama2 ou gemma si vous préférez un autre modèle open source.
+
+
+c. Installer les dépendances Python
+
+
+
+
+3. Lancer le pipeline complet
+Créez un fichier scribe.py avec le code suivant :
+import re
+import ollama
+from transformers import pipeline
+
+# 1. Transcription audio
+asr = pipeline("automatic-speech-recognition", model="openai/whisper-medium", device=0)
+transcript = asr("consultation.wav")["text"]
+
+# 2. Extraction d’allergies et médicaments
+allergy = re.search(r"allergic to ([\w\s]+)", transcript.lower())
+allergen = allergy.group(1).strip() if allergy else None
+meds = [d for d in ["penicillin", "amoxicillin", "aspirin"] if d in transcript.lower()]
+
+# 3. Prompt LLM
+prompt = f"""
+You are a medical scribe. Write a structured note (Subjective, Objective, Assessment, Plan) from this conversation:
+{transcript}
+"""
+if allergen:
+    prompt = f"Patient is allergic to {allergen}. " + prompt
+
+note = ollama.generate(model="mistral", prompt=prompt)["response"]
+
+# 4. Validation
+if allergen and any(allergen in m for m in meds):
+    note += f"\n⚠️ Allergy to {allergen} detected, but {allergen} was mentioned in the plan."
+
+print(note)
+
+
+
+4. Exécution
+python scribe.py
+
+
+
+5. Résultat attendu
+
+Un compte-rendu structuré généré automatiquement
+Une alerte si une allergie est ignorée
+Le tout en local, sans connexion internet
+
+
+🔄 Pour aller plus loin
+
+Ajouter une interface Streamlit ou Gradio
+Intégrer un module de NER médical (spaCy ou scispacy)
+Ajouter des tests unitaires pour chaque étape
+Envisager un fine-tuning LoRA avec vos propres données
+Souhaitez-vous que je vous aide à générer un script complet prêt à l’emploi ou à créer un scénario audio de test ?
+
+2-Day Prototype Implementation Guide: Local “Virtual Medical Scribe”
+This guide outlines how to build a virtual medical scribe prototype in 2 days using open-source, local tools. The prototype will convert a doctor-patient conversation into a structured medical note, combining speech-to-text transcription (OpenAI’s Whisper), a fine-tuned LLM (Mistral 7B via Ollama) for text generation, and rule-based logic for validation. We emphasize a fully local setup (for privacy) using modest hardware (e.g. a single GPU or even CPU, ~16–32 GB RAM). Below, we detail the environment setup, pipeline components, implementation steps with code snippets, testing methodology, and future evolution.
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="metrics-container">
+  <div class="metric-card">
+    <h4>Prototype Timeline</h4>
+    <div class="metric-card-value">2 days</div>
+    <p>Design, implement & test core features in a weekend</p>
+  </div>
+  <div class="metric-card">
+    <h4>Hardware</h4>
+    <div class="metric-card-value">≈ 16&nbsp;GB RAM</div>
+    <p>Runs on a single GPU (or CPU fallback)</p>
+  </div>
+  <div class="metric-card">
+    <h4>LLM Model</h4>
+    <div class="metric-card-value">Mistral&nbsp;7B</div>
+    <p>Efficient open-source model via Ollama</p>
+  </div>
+  <div class="metric-card">
+    <h4>Transcription</h4>
+    <div class="metric-card-value">Whisper</div>
+    <p>Accurate speech-to-text, multi-language</p>
+  </div>
+
+
+1. Environment Setup (Day 1 Morning)
+Install dependencies and tools:
+
+Ollama (LLM runtime) – Ollama is an open-source engine to run LLMs locally (analogous to Docker for models). Install it on your machine (supports macOS, Linux, Windows). For example:macOS: brew install ollama
+Linux: curl -sS https://ollama.ai/install.sh | bash
+Ensure the Ollama service is running (on macOS, brew services start ollama or run any ollama command).
+Pull an LLM model – We’ll use Mistral 7B (powerful yet lightweight 7B-parameter model) as our language model. Download it via Ollama:
+
+ollama pull mistral
+
+ This fetches the model weights. (Alternatively, you could use Llama-2 7B or another open model. Note: A 7B model typically needs ~16 GB RAM for inference, which fits our hardware target.)
+
+Python libraries – We’ll write the pipeline in Python. Install required packages:
+
+
+
+
+transformers – Hugging Face Transformers for Whisper (speech recognition) and possibly any NLP utilities.
+ollama – Python SDK to interact with the local Ollama server.
+whisper – OpenAI’s Whisper model wrapper (optional; we could also use Transformers for Whisper).
+soundfile or torchaudio – For reading audio files (Whisper can accept file paths directly, but having a library for audio I/O is useful).
+Verify installations:Run ollama list to see available models (should list mistral if pulled). Or use Python:
+
+import ollama
+print(ollama.models())  # list installed models
+
+
+Test Transformers/Whisper:
+
+from transformers import pipeline
+transcriber = pipeline(task="automatic-speech-recognition", model="openai/whisper-tiny")
+
+ If this runs without error, the environment is set.
+
+2. Prototype Pipeline Architecture
+We design a pipeline with four stages, each handled by a separate module:
+
+Speech-to-Text Transcription (ASR) – Convert doctor-patient dialogue audio into text using Whisper.
+Information Extraction – Parse the raw transcript to identify key medical info (e.g. symptoms, meds, allergies).
+LLM Prompting & Note Generation – Feed the transcript (and extracted info) into a local LLM (Mistral-7B) to generate a structured medical note (e.g. SOAP format).
+Rule-Based Validation – Apply domain rules to the generated note to catch errors (e.g. contraindications, missing sections).
+Each component is modular, so they can be improved or replaced independently. Importantly, all processing is local: audio and text data never leave the machine, preserving patient privacy.
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="insights-container">
+  <div class="insight-card">
+    <h4>🎤 Whisper ASR</h4>
+    <p>Using OpenAI’s Whisper model for transcription. It’s robust to medical jargon without fine-tuning and supports multilingual speech. This ensures we capture the conversation accurately for the next steps.</p>
+  </div>
+  <div class="insight-card">
+    <h4>🔍 Extraction & Logic</h4>
+    <p>Simple text processing to find crucial entities (medications, symptoms, etc.) and cross-check them against medical rules. This neuro-symbolic touch provides a safety net (e.g., flagging an allergy conflict) that pure LLMs might miss.</p>
+  </div>
+  <div class="insight-card">
+    <h4>🤖 Local LLM (Mistral)</h4>
+    <p>Mistral 7B, running via Ollama, generates the draft note. It’s an open model we control fully, which we can <strong>fine-tune</strong> or prompt-engineer as needed. Running it locally via Ollama ensures fast, offline inference.</p>
+  </div>
+  <div class="insight-card">
+    <h4>✅ Validation</h4>
+    <p>We verify the LLM’s output meets requirements: correct structure (sections present), consistency with the conversation (no hallucinated info), and compliance with simple medical rules. This boosts reliability for real-world use.</p>
+  </div>
+
+
+3. Implementation Steps (Day 1 Afternoon – Day 2)
+We now implement each pipeline component with code, and then integrate them.
+3.1 Speech Transcription Module
+We use the Hugging Face Transformers pipeline for Whisper (which wraps the model and processing in one call). Whisper has various model sizes; to balance speed and accuracy, we’ll use base or small for the prototype. (Larger models yield better transcripts but need more resources.)
+Code – Transcription (Whisper via Transformers):
+from transformers import pipeline
+
+# Load Whisper model (medium sized for English; adjust model name for different size or language)
+transcriber = pipeline(
+    task="automatic-speech-recognition",
+    model="openai/whisper-medium",
+    device=0  # use GPU 0 if available, otherwise remove this param to use CPU
+)
+
+This loads the Whisper model. The first time, it will download weights (~1.5GB for medium). Whisper works out-of-the-box (pretrained on 680k hours of diverse data) so we don’t need to fine-tune it for our task.
+Now, transcribe an audio file (WAV/MP3/FLAC) of a consultation:
+audio_path = "sample_consultation.wav"
+result = transcriber(audio_path)
+transcript_text = result['text']
+print(transcript_text)
+
+If using a GPU, we cast to half-precision (dtype=torch.float16) for speed. In our example, transcript_text will contain the entire conversation in text form. For instance:
+Transcript output (example):\ “Doctor: Hello, what brings you in today?\ Patient: I’ve had a sore throat for a week and I'm allergic to penicillin.\ Doctor: Understood. Any fever? …”
+(In practice, Whisper may include punctuation and speaker tags if prompted; we can post-process the text as needed.)
+3.2 Information Extraction & Rule Logic
+Next, we analyze the transcript_text to extract key entities:
+
+Medications mentioned (e.g. “penicillin”)
+Allergies (e.g. “allergic to penicillin”)
+Symptoms and duration (e.g. “sore throat for a week”)
+For a 2-day prototype, we can use simple regex or keyword matching for these. For example, find phrases like “allergic to X” or look for known drug names. In production, we’d use a medical NER (possibly fine-tuned) for higher accuracy, but simple rules suffice for now.
+We also define a basic rule: If an allergy to a drug is mentioned, ensure that drug (or its class) is not prescribed in the note. This will be our example rule-based check.
+Code – Extraction and Rule Check:
+import re
+
+transcript_text = transcript_text.lower()  # simplify matching by lower-casing
+
+# Extract allergy information
+allergy_match = re.search(r"allergic to ([\w\s]+)", transcript_text)
+allergy_substance = allergy_match.group(1).strip() if allergy_match else None
+
+# Extract mentioned medications (e.g., ones patient is taking or doctor considers)
+# Simple approach: a predefined list of drugs or looking for keywords like "aspirin", "penicillin", etc.
+meds_mentioned = []
+for drug in ["penicillin", "ibuprofen", "amoxicillin", "aspirin"]:
+    if drug in transcript_text:
+        meds_mentioned.append(drug)
+meds_mentioned = list(set(meds_mentioned))  # unique
+
+print("Allergy:", allergy_substance, " Meds discussed:", meds_mentioned)
+
+# Define a rule violation flag
+violation = False
+if allergy_substance:
+    for med in meds_mentioned:
+        # If a med that is mentioned is the allergen or in the same family:
+        if allergy_substance in med or med in allergy_substance:
+            violation = True
+            rule_issue = f"Allergy to {allergy_substance} noted, but {med} was discussed/prescribed."
+            break
+
+In a real case, we’d need a mapping of drug families (e.g. penicillin allergy should flag amoxicillin as well – in code we could list penicillin-class antibiotics). For our prototype, the regex captures a single allergen, and we simply check if that exact name appears in meds.
+(Example: from the transcript above, allergy_substance = "penicillin", meds_mentioned = ["penicillin"]. So the rule would flag if the note tries to prescribe penicillin.)
+3.3 LLM Prompting and Note Generation
+Now the core: use the LLM to generate a structured medical note from the conversation. We run the model via Ollama’s Python API for convenience.
+Why Ollama? It gives an easy interface to local models. We already pulled Mistral 7B with Ollama. The Python package lets us call ollama.generate(model="mistral", prompt=...) to get a response. Under the hood, Ollama uses optimized inference (possibly llama.cpp) so a 7B model can even run on CPU if needed, albeit slower.
+First, craft the prompt for the model. We need to guide it to produce a structured note. A common format is SOAP (Subjective, Objective, Assessment, Plan) or a simpler summary with sections (Findings, Diagnosis, Recommendation). We will include the conversation and explicitly ask for a note.
+Prompt Design: We use a few-shot style: provide an example of how to write the note, or at least a clear instruction. For simplicity, we might do:
+SYSTEM: You are an assistant that turns doctor-patient conversations into medical notes. Always include sections for "Subjective", "Objective", "Assessment", "Plan".    USER: [Here we insert the transcript text]    ASSISTANT: (the model should output the note)
+We’ll incorporate our extracted data as well, perhaps emphasizing any allergies so the model doesn’t ignore them.
+Code – Prompt and Generate Note:
+import ollama
+
+# Formulate prompt with instruction and transcript
+system_prompt = ("You are a medical scribe assistant. Read the conversation below and produce a concise, structured medical note "
+                "with headings for Subjective, Objective, Assessment, and Plan. Use formal clinical language. ")
+if allergy_substance:
+    system_prompt += f"Note any allergies (patient is allergic to {allergy_substance}). "
+
+user_prompt = f"Conversation:\n{transcript_text}\n\nMedical Note:"
+full_prompt = system_prompt + "\n" + user_prompt
+
+# Generate note with Mistral via Ollama
+result = ollama.generate(model='mistral', prompt=full_prompt)
+generated_note = result['response']
+print("Generated Note:\n", generated_note)
+
+When this runs, Ollama will ensure the mistral model is loaded (the first call may take a few seconds as it initializes). The generated_note should contain the AI’s attempt at the note. For example, it might look like:
+Subjective:
+
+Patient reports a sore throat for 1 week. Denies fever or cough.
+Allergies: Penicillin (patient states allergy).
+Objective:
+
+Throat examination: Redness in the pharynx, no tonsillar exudate.
+Vital signs: Temp 37.0°C, BP 120/80.
+Assessment:
+
+Pharyngitis, likely viral. Pain is moderate, patient able to swallow liquids.
+Plan:
+
+Advise saltwater gargles and hydration.
+Prescribed acetaminophen for pain relief.
+Note: Avoid penicillin antibiotics due to allergy.
+Follow-up if symptoms worsen or persist beyond 10 days.
+(We expect the model to produce something along those lines. Being a small model, it might not perfectly follow the format on first try – we can adjust the prompt or give an example format if needed. The key is that it includes the critical info from the conversation.)
+3.4 Rule-Based Validation & Final Output
+After generation, we apply our rule check. If our violation flag was set (e.g., the note prescribes a drug the patient is allergic to), we can act. In a real system, we might automatically remove that line or add a warning. For the prototype, we’ll just annotate the output or log a warning.
+Code – Validate output note:
+if violation:
+    print("WARNING:", rule_issue)
+    # For the prototype, also append a warning in the note text:
+    generated_note += f"\n\n⚠️ {rule_issue}"
+
+We also do a simple structural validation: ensure the note contains the expected sections (Subjective, Objective, etc.):
+required_sections = ["Subjective:", "Objective:", "Assessment:", "Plan:"]
+for sec in required_sections:
+    if sec not in generated_note:
+        print(f"[Validation] Section '{sec}' is MISSING from the note.")
+
+If a section is missing, it indicates the model didn’t follow format perfectly – in a hackathon setting, we might tweak the prompt or just acknowledge this and manually adjust. (Alternatively, one could post-process: e.g., if “Plan:” is missing, add “Plan: - \[to be filled]” at the end.)
+At this stage, we have a complete pipeline: audio -> text -> structured note -> validated note. We can wrap these steps into a single script or function for convenience.
+3.5 End-to-End Integration
+Combine everything into a script run_scribe.py (for example) that takes an audio file and produces the final note:
+def generate_medical_note_from_audio(audio_path):
+    # 1. Transcription
+    transcript = transcriber(audio_path)['text']
+    # 2. Extraction & rules
+    allergy_match = re.search(r"allergic to ([\w\s]+)", transcript.lower())
+    allergy = allergy_match.group(1).strip() if allergy_match else None
+    meds = [drug for drug in ["penicillin","amoxicillin","ibuprofen","aspirin"] if drug in transcript.lower()]
+    violation = False; issue = ""
+    if allergy:
+        for med in meds:
+            if allergy in med or med in allergy:
+                violation = True
+                issue = f"Allergy to {allergy} noted, but {med} mentioned."
+                break
+    # 3. LLM Generation
+    sys_prompt = "You are a medical scribe... (same as above)" 
+    if allergy: sys_prompt += f"(Patient allergic to {allergy}). "
+    usr_prompt = f"Conversation:\n{transcript}\n\nMedical Note:"
+    full_prompt = sys_prompt + "\n" + usr_prompt
+    note = ollama.generate(model='mistral', prompt=full_prompt)['response']
+    # 4. Validation
+    if violation:
+        note += f"\n⚠️ {issue}"
+    for sec in ["Subjective:", "Objective:", "Assessment:", "Plan:"]:
+        if sec not in note:
+            note += f"\n⚠️ Missing section: {sec}"
+    return note
+
+# Example usage:
+final_note = generate_medical_note_from_audio("sample_consultation.wav")
+print(final_note)
+
+This function orchestrates the whole pipeline. Note: In a real deployment, you’d factor in error handling (e.g., if ASR fails or Ollama server is not running) and perhaps optimize by reusing the loaded models between calls.
+4. Testing the Prototype (Day 2 Afternoon)
+With everything in place, we need to test the pipeline on a sample scenario and verify it works as expected.
+Test scenario: Create or obtain a short audio of a mock consultation. For instance, a 1-minute dialogue where the patient describes a simple ailment and mentions an allergy. (You can record yourself playing both roles, or use text-to-speech to generate an audio from a written script.)
+Example script for testing:\ Doctor: "Hello, what can I do for you?"\ Patient: "I have had a bad cough and fever for 3 days. I’m allergic to aspirin."\ Doctor: "Understood. Any chest pain?" … (and so on, finish with a diagnosis of viral infection and plan)
+Save this as sample_consultation.wav. Then run final_note = generate_medical_note_from_audio("sample_consultation.wav").
+What to check:
+
+Transcription accuracy: Print transcript (or intermediate results) to see if Whisper correctly captured the conversation. If there are minor errors (e.g., “3 days” heard as “three days” – that’s fine). If it missed a key fact (like the allergy), that’s a problem to address (maybe try a larger Whisper model or clearer audio).
+Entities extraction: In our logs, see that allergy_substance and meds_mentioned were correctly identified (e.g., “aspirin” as allergy, and any drug doctor mentions, if any).
+LLM output quality: Does the generated_note make sense? Does it include the major complaint (cough, fever), the allergy, and a plan? It should ideally not introduce unrelated information (no hallucinations). Since our model is running fully offline and was prompted with only the convo, any detail in the note should trace back to the transcript. If you notice any invented detail, that’s a hallucination – in a 7B model test, this is possible if the prompt isn’t tight. In such case, you can strengthen the instruction (e.g., “Only include information provided by patient or doctor. Do not assume facts not stated.”).
+Format & sections: Confirm the note has the 4 sections. Our validation code will append warnings if any are missing. For the hackathon demo, it’s okay if, say, “Objective” is empty for now, as long as we call it out. We can explain that with more time, we’d enforce a template or do post-processing to ensure each section is filled.
+Rule enforcement: If our test included an allergy, check that the Plan did not accidentally recommend the allergen. For instance, if the patient is allergic to aspirin, the note’s Plan should not include aspirin. If it did, our violation flag would be true and a warning “⚠️ Allergy to aspirin noted, but aspirin was mentioned” would appear at the end. This demonstrates our system caught a potential error – a nice touch for the demo.
+We can also write simple functional tests in code:
+assert "Patient" in transcript_text or "patient" in transcript_text  # transcript contains content
+assert "Assessment:" in final_note and "Plan:" in final_note        # note has key sections
+if "allergic to" in transcript_text:
+    assert "Allerg" in final_note                                  # note mentions allergies if any in transcript
+
+These ensure that, for example, any allergy mentioned in conversation is reflected in the note. We could add more, like checking that every symptom reported is in the note (perhaps by keyword). In practice manual review is needed for quality, but these automated checks give quick feedback during development.
+5. Validation Strategy
+Beyond functional tests, consider a strategy to measure the prototype’s performance:
+
+Transcription quality: Calculate Word Error Rate (WER) by comparing Whisper’s output to a manual transcript of the audio. For our short sample, we can eyeball it. If we had a dataset of doctor-patient recordings with transcripts, we could use that to quantitatively evaluate ASR accuracy.
+Medical accuracy: Create a few test scenarios (different symptoms, different allergies/meds) and verify the notes cover the vital information. We might score each generated note on completeness (did it capture all complaints, findings, and plans mentioned?) and correctness (no incorrect medical statements, no hallucinations beyond the input).
+Hallucination check: Because we control the input fully, we can check if any content in output wasn’t present or implied. Our simple extraction cross-check helps here: for each medication or diagnosis in the note, confirm it was mentioned by doctor or patient. If the note contains “Prescribed amoxicillin” but the patient never agreed or doctor never said that, that’s a hallucination or an unjustified assumption (maybe the model “assumed” an antibiotic prescription). In a demo, we’d point out this issue and note it could be fixed by fine-tuning the model or adding more explicit constraints in the prompt.
+Rule-based scenarios: Test edge cases for our rules, e.g., no allergy (the note should be straightforward), vs allergy present (the note should reflect it and our warning triggers if not handled). This shows the added value of the symbolic component: even if the LLM slips, we catch it.
+Because this is a prototype, some leniency is fine. The goal is to show it works on the happy path and that we have a plan to address errors.
+6. Potential Evolution (Tech Vision)
+In just 2 days, we get a working demo of an AI scribe that highlights key capabilities. With more time, this prototype can evolve significantly:
+
+Enhanced Fine-Tuning: Currently, Mistral 7B is used largely out-of-the-box (apart from our prompt). We could apply LoRA fine-tuning on a small set of example consultations and notes to teach the model the desired style and structure. QLoRA in particular would let us fine-tune efficiently on a single GPU. This would reduce the need for prompt engineering and likely improve the coherence of the notes.
+Larger/Better Models: As resources allow, we could swap in a more powerful LLM (LLaMA-2 13B, or a medicine-specific model like GPT4All Healthcare). The Ollama setup makes this easy – just ollama pull a new model and change the model name. Because Ollama is flexible, even scaling up to 70B models or running multiple models (for ensemble or specialized tasks) is possible when hardware is available.
+Integration with EHR systems: The output note can be structured in JSON or FHIR format to directly integrate into Electronic Health Record software. For example, we could map sections to specific fields (Assessment -> Diagnosis ICD code, Plan -> orders and prescriptions). In a next iteration, our code could call an API or database to log the note. This would turn the prototype into a functional assistant in a clinical workflow.
+Personalization: Each doctor has a preferred style or might want certain phrases. We can allow the user to provide feedback or small edits on the generated note and use reinforcement learning from human feedback (RLHF) to adjust the model. For instance, if the doctor always writes “Dx:” instead of “Assessment:”, the system could learn to adapt. Storing a few corrected outputs and fine-tuning the model (or a lightweight adapter) on them would implement this personalization over time.
+Multilingual support: Whisper already handles multiple languages. If doctors or patients speak languages other than English (e.g., Spanish in Southern US, French in parts of Canada, etc.), the pipeline can transcribe those. We’d need a multilingual or language-specific LLM for note generation (or translate the transcript to English for the LLM, then output note back in the original language if required). The open-source ecosystem has models in many languages, and we could maintain separate fine-tuned versions per language if needed.
+Additional AI capabilities: We could incorporate a medical knowledge base or diagnosis API to augment the Assessment. E.g., if unsure of a drug dosage, the assistant could query a local formulary (since Ollama can call functions or we can add a step to use an external library). This starts entering the agentic AI realm – e.g., using LangChain or similar, we could have the LLM request a “lookup” operation for drug information. Since Ollama supports function calling in principle, we could extend the system to not just scribe but also suggest next steps, check drug interactions (beyond our simple rule), etc.
+Vision: Ultimately, this prototype could become a production-grade AI medical scribe that saves doctors time on documentation, improves accuracy (through consistent note structure and checks), and maintains privacy (since everything runs on the hospital’s local servers, no data is sent out). The architecture is scalable: for instance, multiple instances of the pipeline could run on hospital hardware for multiple exam rooms simultaneously. As open-source models get better (e.g., Mistral 7B’s successors or LLaMA 3), we can upgrade the brain of the system with minimal changes.
+The key differentiators we’d pitch are:
+
+Privacy by design: All processing is local (no cloud) – crucial for patient data.
+Flexibility: Every component is open-source and modifiable – one can fine-tune the model, adjust rules, integrate with any IT system.
+Tangible time savings: Show a before/after of documentation time. Even in our test, if a note is drafted in seconds and needs just a quick review, that’s a big win.
+7. Components & Installation Summary
+Finally, here’s a summary of the main components used in this prototype, their roles, and how to set them up:
+
+Component	Role in Pipeline	Installation/Setup
+Ollama – LLM runtime	Hosts and serves local LLMs (Mistral, LLaMA). Simplifies running the model offline.	brew install ollama (macOS) or official script (Linux). Start the Ollama service (runs on port 11434 by default).
+Mistral 7B model	Core large language model generating the medical note text. Selected for good performance vs size.	ollama pull mistral – downloads the model weights into Ollama’s store. (For LLaMA-2: ollama pull llama2 etc.) Ensure ~8–16GB RAM available to load it.
+OpenAI Whisper (via HF Transformers)	Automatic Speech Recognition – transcribes audio to text. Chosen for accuracy on clinical speech without fine-tuning.	pip install transformers torch (for pipeline) and download model on first use. (Optionally pip install whisper for OpenAI’s version). No additional config – runs on CPU/GPU.
+Python Ollama SDK	Python library to call Ollama’s API from code (send prompts to model, get responses).	pip install ollama. (Ollama service must be running in background.) Use ollama.generate() in Python to get model outputs.
+Regex/Rule logic (Python stdlib)	Simple rule-based checking (find “allergic to X”, etc.) and enforcement of do-not-prescribe rules.	(Included in Python 3). We used re for regex. No special install. For complex medical NLP, could install spaCy or similar, but not needed in this prototype.
+Audio I/O (soundfile, pydub)	Reading audio files for transcription, and potential audio pre-processing (e.g., conversion to 16k mono).	pip install soundfile pydub (if needed). In our code, Whisper pipeline can accept a file path directly, so this is mostly optional.
+Test Audio (sample_consultation.wav)	Simulated doctor-patient conversation to test the pipeline end-to-end.	Record manually or use TTS. Ensure clear audio (16 kHz WAV recommended). Not an installable component, but a necessary input for testing.
+
+With this setup and guide, you should be able to reproduce the 2-day prototype. Run the pipeline on the sample scenario, observe the output, and iterate as needed. By following these steps, we demonstrated the viability of a local AI scribe and laid the groundwork for a more advanced solution that could one day assist clinicians in real-world settings – saving time, improving documentation, and keeping data private.
+
+Prototype 48h – Assistant vocal intelligent en santé (Hackathon)
+Pour démontrer les avancées IA de pointe appliquées à la santé en un week-end, nous proposons de réaliser un prototype d’assistant vocal pour médecins généralistes. Ce prototype montrera comment combiner :
+
+Transcription vocale locale en temps réel (via Whisper) pour capter une consultation simulée,
+LLM open source adapté (fine-tuning LoRA/QLoRA) pour générer automatiquement un compte-rendu médical structuré,
+Intégration de logique métier (règles neuro-symboliques simples) pour fiabiliser la note (ex : alerte allergie),
+Pipeline modulaire personnalisé orchestrant ces composants de bout en bout.
+L’objectif est de prouver en 2 jours qu’on peut automatiser la rédaction d’un compte-rendu à partir d’un dialogue médecin-patient, en local (données confidentielles) et de manière fiable (notes complètes sans erreur critique), le tout avec des briques open source. Ce POC servira de vitrine différenciante face à la concurrence, en mettant en avant la personnalisation (modèle affiné sur le médical et adaptable au style du médecin), la souveraineté des données (traitement sur machine locale, conforme RGPD/HIPAA), et la qualité de la note produite (structurée et sans incohérences majeures).
+Architecture cible du prototype
+En 48h, nous allons construire un mini « scribe médical » automatique. Voici les composants principaux et leur enchaînement :
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="insights-container">
+  <div class="insight-card">
+    <h4>🔊 Entrée Voix → Texte</h4>
+    <p>Utiliser <strong>Whisper</strong> (OpenAI, open source) pour transcrire la conversation simulée en texte. On exploitera l'implémentation HuggingFace <code>pipeline("automatic-speech-recognition")</code>, qui permet en quelques lignes de code d'obtenir le texte à partir d’un fichier audio. Le modèle Whisper Large multilingue (ou sa version distillée pour plus de rapidité) sera téléchargé en local ; il est réputé performant en français, mais pourra être <strong>affiné</strong> si possible sur du vocabulaire médical pour réduire les erreurs.</p>
+  </div>
+  <div class="insight-card">
+    <h4>💡 Analyse & Logique métier</h4>
+    <p>Traiter la transcription brute pour en extraire les éléments clés et appliquer des <strong>règles métier</strong>. Par exemple, détecter les mentions d’<em>allergie</em> ou de <em>médicament</em> dans le texte (via des expressions régulières ou un modèle de NER médical léger). Si une règle se déclenche (ex. le patient est allergique à la pénicilline et un antibiotique de cette famille est évoqué), on en tiendra compte dans la génération (prévenir ou modifier la suggestion). Cette couche <em>neuro-symbolique</em> simple apporte de la <b>fiabilité</b> en évitant des propositions cliniquement erronées.</p>
+  </div>
+  <div class="insight-card">
+    <h4>🤖 Texte → Compte-rendu structuré</h4>
+    <p>Utiliser un <strong>LLM open source</strong> pour transformer la transcription (et les informations extraites) en un compte-rendu médical formaté (par ex. type <abbr title="Subjectif, Objectif, Analyse, Plan">SOAP</abbr>). On choisira un modèle <em>7 milliards de paramètres environ</em> (ex. LLaMA-2 7B ou Mistral 7B) afin de pouvoir l’exécuter en local. On l’orientera via du <strong>prompt engineering</strong> (ex. gabarit de rapport avec sections) et surtout via un <strong>fine-tuning spécialisé</strong> sur le domaine médical. Grâce à des techniques d’affinage efficaces (LoRA/QLoRA), il est possible d’entraîner ce type de modèle sur des données médicales spécifiques même avec une seule GPU modeste. Le LLM générera ainsi automatiquement le compte-rendu (conclusion, ordonnance, etc.) en langage naturel, prêt à être relu et copié par le médecin.</p>
+  </div>
+  <div class="insight-card">
+    <h4>🔗 Orchestration & IHM</h4>
+    <p>Connecter les modules précédents au sein d’un <strong>pipeline Python</strong> (voire en utilisant un orchestrateur comme LangChain pour gérer l’enchaînement des étapes). Le script principal prendra en entrée un fichier audio de consultation et produira en sortie un document texte structuré. En fin de hackathon, on pourra présenter le résultat soit dans la console, soit via une mini interface (ex. Streamlit ou Gradio) permettant de lancer la démo (téléversement d’un audio témoin et affichage de la note générée). Cette couche finale sert à <strong>illustrer concrètement</strong> l’expérience utilisateur : « Je parle, l’IA écrit pour moi ». </p>
+  </div>
+
+
+Choix technologiques : Tout au long du développement, on s’appuiera sur des solutions open source éprouvées : la librairie 🤗 Hugging Face Transformers (modèles de langue et APIs de pipeline), l’implémentation open source de Whisper (pour ASR), les outils de PEFT (Parameter-Efficient Fine-Tuning) comme HuggingFace PEFT ou la lib Unsloth pour appliquer LoRA/QLoRA, éventuellement spaCy ou HuggingFace Tokenizers pour l’extraction de motifs médicaux, et du simple Python (pandas, règles codées) pour la logique métier. L’ensemble sera développé en Python, ce qui est approprié pour intégrer facilement ces bibliothèques et scripter un prototype rapidement.
+Nous profiterons également de jeux de données ouverts ou synthétiques : par exemple, créer un scénario de consultation fictif (dialogue médecin-patient sur un motif courant, avec antécédents et décision thérapeutique) qui servira de cas de test principal. Si possible, on pourra intégrer quelques données publiques pour l’entraînement express du LLM (par ex. des paires question-réponse médicales ou des exemples de comptes rendus fournis dans la littérature). Citons le projet MediQA ou des bases comme WikiDoc/MedQuAD qui contiennent des Q&R médicales – utiles pour affiner un modèle sur le jargon médical, si on a le temps d’en utiliser un extrait.
+Plan de prototypage sur 2 jours
+Compte tenu du délai très court (48h), le plan est d’avancer pas à pas en construisant d’abord un pipeline fonctionnel minimal, puis en améliorant chaque composant. Nous répartissons le travail en quatre phases (une par demi-journée) :
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<ul class="timeline-container">
+  <li>
+    <h4>Jour 1 Matin – Installation, préparation des données</h4>
+    <p><strong>Objectif :</strong> Mettre en place l’environnement et disposer de toutes les ressources de base pour développer.<br/>
+    • <b>Installation</b> des dépendances (librairies HuggingFace, PyTorch, etc.) et configuration d’un GPU (ex. instance Colab Pro si nécessaire).<br/>
+    • <b>Téléchargement des modèles pré-entraînés</b> : Whisper (taille large ou medium) et un LLM open source 7B (par ex. <em>Llama-2 7B Chat</em> ou <em>Mistral 7B Instruct</em>) quantifié en 4 bits pour économiser la VRAM. On récupère aussi un modèle LoRA déjà entraîné si disponible (ex. <i>Shekswess/llama-2-7b-medical</i> sur HuggingFace) pour gagner du temps.<br/>
+    • <b>Préparation du jeu de données</b> : script d’extraction ou rédaction manuelle d’un <em>scénario de consultation</em> (dialogue écrit) qui servira de base de test. Idéalement, créer 2–3 variations de ce dialogue et si possible un ou deux exemples de compte-rendu attendus, afin d’avoir de quoi fine-tuner et évaluer le LLM.</p>
+  </li>
+  <li>
+    <h4>Jour 1 Après-midi – Transcription & Fine-tuning</h4>
+    <p><strong>Objectif :</strong> Obtenir la brique de transcription audio->texte, et lancer l’affinage du modèle de langue.<br/>
+    • <b>Module ASR</b> : implémentation de la transcription avec Whisper. On peut enregistrer un court audio jouant le dialogue (ou utiliser une synthèse vocale) puis tester la conversion en texte via la pipeline HuggingFace. On valide que la transcription est compréhensible et corrige éventuellement le texte (traitements mineurs : ponctuation, segmentation par locuteur si possible).<br/>
+    • <b>Entraînement du LLM (fine-tuning léger)</b> : on prépare un mini-ensemble d’entraînement avec, par exemple, des <em>paires input/output</em> où l’input est une transcription de consultation et l’output le compte-rendu rédigé. On utilise PEFT/QLoRA pour entraîner rapidement sur notre base (quelques centaines d’itérations suffisent quitte à sur-ajuster, c’est pour la démo). Des travaux montrent qu’on peut affiner LLaMA-2 7B en quelques heures sur un GPU standard grâce à QLoRA. Si le temps manque, on optera pour du <i>prompt tuning</i> : fournir au modèle des exemples pour qu’il imite le style sans entraînement prolongé. Quoi qu’il en soit, à la fin de J1 on doit être capables de <b>générer un premier brouillon de compte-rendu</b> à partir du texte de la conversation, même s’il est très perfectible.</p>
+  </li>
+  <li>
+    <h4>Jour 2 Matin – Intégration de la logique métier et du pipeline</h4>
+    <p><strong>Objectif :</strong> Relier entre eux les modules et ajouter les contrôles métier pour fiabiliser le résultat.<br/>
+    • <b>Extraction d’information</b> : développer une étape qui repère, dans le texte transcrit, les informations cruciales (symptômes, diagnostics, traitements). Par simplicité, on ciblera une ou deux entités – par ex. détecter les noms de médicaments prescrits et les allergies. On peut coder des motifs regex (ex. « allergique à X ») ou utiliser un modèle de reconnaissance d’entités pré-entraîné (ex. spaCy francophone médical). Le résultat pourra être stocké dans une structure (dict JSON) ou directement influé sur le prompt du LLM (ex. <i>« [Allergie connue: Penicilline] »</i> ajouté en contexte).<br/>
+    • <b>Règle neuro-symbolique</b> : implémenter la règle d’alerte allergie (cas d’usage marquant). Par exemple, si le patient est allergique à la pénicilline et que le LLM propose un antibiotique de cette classe, le pipeline le détectera et pourra soit ajuster le texte (remplacer par un équivalent sans allergène), soit ajouter un ⚠️ dans la note générée signalant de vérifier la prescription. Cette vérification raisonnée se fait hors LLM, ce qui garantit son exécution systématique (on ne dépend pas d’une « compréhension » du modèle, on le guide). <b>Nabla</b> indique par exemple combiner des algorithmes métier internes avec le LLM pour fiabiliser ses notes – nous faisons de même à notre échelle.<br/>
+    • <b>Chaînage et API</b> : écrire le script principal qui enchaîne : audio -> texte (ASR) -> extraction infos -> appel LLM (via `model.generate` ou pipeline texte) -> post-traitements. À ce stade, on obtient <i>d’un seul tenant</i> le flux complet. On peut tester avec notre scénario audio et observer le compte-rendu final, puis corriger les bugs d’intégration.</p>
+  </li>
+  <li>
+    <h4>Jour 2 Après-midi – Affinages finaux et préparation du pitch</h4>
+    <p><strong>Objectif :</strong> Polir la démo et préparer la présentation de ses atouts.<br/>
+    • <b>Améliorations</b> : itérer selon les résultats du matin. Par ex., si le compte-rendu généré manque de structure, renforcer le prompt (imposer un format type bullet points ou sections <i>« Impression », *« Plan »). Si des informations importantes ne figurent pas, s’assurer qu’elles sont bien extraites et passées en entrée du modèle. Vérifier aussi la performance de Whisper sur quelques accents ou termes (au besoin, créer un petit *vocabulaire personnalisé</i> pour corriger certains mots médicaux mal transcrits).<br/>
+    • <b>Interface demo</b> (si temps) : pour un pitch percutant, éventuellement mettre en place une interface web minimaliste où un clic lance le traitement sur un exemple pré-enregistré. Par exemple un bouton « Jouer la consultation » puis une zone qui affiche en direct ou après coup la transcription et la note générée. Sinon, on montrera le fonctionnement en console (fichier audio -> script -> sortie texte). L’important est d’illustrer chaque étape de manière claire aux jurés.<br/>
+    • <b>Pitch</b> : préparer quelques slides ou discours structuré. Expliquer le problème (temps perdu à documenter), la solution (notre assistant), et <b>démontrer live</b> sur le cas d’usage. Souligner ce qui rend notre approche unique : 100% local (pas de fuite de données patients), modèle affiné donc jargon médical compris, et garde-fous intégrés (notre alerte allergie). Quantifier les gains potentiels (ex : « remplace 5-10 min d’écriture par consult, soit ~1h par jour de médecin »), et conclure sur les perspectives (améliorer l’IA avec plus de données, lier au logiciel métier via API, etc.).</p>
+  </li>
+
+
+Enfin, pour plus de lisibilité, voici un récapitulatif synthétique des tâches par demi-journée et des composants utilisés :
+
+Demi-journée	Tâches principales	Composants & outils
+Jour 1 – Matin	– Installation env. Python (Transformers, PyTorch…) 
+ – Téléchargement modèles open source (Whisper, LLM 7B) 
+ – Préparation des données (scénarios de consultation, exemples d’entraînement)	HF Transformers, Datasets
+Modèles : Whisper large, LLaMA-2 7B (ou équiv.)
+Évent. data : Médical (WikiDoc, MedQuAD)
+Jour 1 – Après-midi	– Implémentation de la transcription audio -> texte (test Whisper pipeline) 
+ – Lancement du fine-tuning du LLM sur notebook (PEFT LoRA/QLoRA) 
+ – Génération d’un 1er compte-rendu brouillon pour un cas test	Whisper HF pipeline (ASR local) 
+ PEFT (LoRA) via 🤗 HuggingFace 
+ Modèle instruct 7B (Mistral/LLaMA) affiné sur domaine médical
+Jour 2 – Matin	– Extraction d’informations clés de la transcription (regex ou NER) 
+ – Implémentation d’une règle métier (ex. alerte allergie) 
+ – Intégration complète : audio -> texte -> LLM -> note (script end-to-end)	spaCy (modèle FR médical) ou regex custom 
+ Règle Python (contrôles sur texte structuré) 
+ Pipeline Python / LangChain pour orchestrer les appels
+Jour 2 – Après-midi	– Tests et améliorations (formatage du rapport, ajustements prompt/model) 
+ – Option : interface démo (Streamlit, Gradio) 
+ – Préparation du pitch (slides, mise en avant des résultats)	Prompt engineering / Few-shot (format SOAP) 
+ Streamlit (web app locale) 
+ Slides de pitch (Canva, PPT) avec résultats et demo
+
+Points d’attention et éléments pour le pitch 🎤
+➔ Données et entraînement : en 48h, l’entrainement du modèle sera nécessairement limité. On devra insister sur le fait que l’affinage est démonstratif (quelques exemples) mais que, dès qu’on alimente le modèle avec plus de données médicales (par la suite), ses performances s’amélioreront nettement. Mentionner que des datasets open source existent (ex: Medical Meadow ou MedQuad présentés par HuggingFace) et qu’on a conçu le pipeline de sorte à pouvoir digérer ces données plus tard (scalabilité du concept). En attendant, notre prototype montre la faisabilité technique et produit déjà un résultat crédible sur un cas simple.
+➔ Limitations actuelles : souligner honnêtement ce qui, dans la démo, est encore perfectible : par ex. « Le modèle confond peut-être encore certains termes techniques ou peut oublier des détails s’ils n’étaient pas dans nos données d’entraînement limitées. » Mais tourner cela en opportunité : « Il suffirait d’enrichir son corpus (comptes rendus existants, guides de bonne pratique) pour qu’il gagne en exhaustivité. » Idem pour Whisper – s’il commet des erreurs de transcription sur certains mots, préciser qu’il peut être fine-tuné sur des audiogrammes médicaux (certains projets commencent à le faire pour réduire son taux d’erreur spécifique en contexte clinique). L’important est de montrer que rien dans notre approche n’est bloquant : ce ne sont que des questions de données ou de temps de calcul.
+➔ Sécurité, confidentialité : c’est un argument fort de notre solution. Contrairement à des concurrents cloud, ici tout tourne en local sur le laptop du médecin (ou du centre de santé). On insistera lors du pitch sur le fait qu’aucune donnée patient ne quitte l’enceinte : la voix est transcrite sur place (Whisper off-line), le LLM est hébergé en local ou sur un serveur maîtrisé (pas d’API tierce). Cela plaît aux médecins et DSI (conformité RGPD, secret médical). Nabla, par exemple, met en avant son hébergement santé et son traitement HIPAA-compliant pour rassurer – notre prototype suit la même philosophie d’IA « souveraine » by design.
+➔ Différenciation & impact : pour conclure, marteler en quoi ce prototype préfigure un produit révolutionnaire dans la pratique clinique quotidienne. Différenciateurs à mettre en avant :
+
+Gain de temps : le médecin n’écrit plus, il valide simplement un compte-rendu déjà rédigé. On peut estimer que sur une consultation de 15 min, il économise 5 min d’écriture, soit +30% de temps pour le patient ou pour voir un autre patient. Sur une journée, c’est facilement 1 heure de gagnée (donc potentiellement 4 patients de plus ou 1h de fatigue en moins).
+Qualité et standardisation : l’assistant produit une note structurée de manière homogène, avec toutes les rubriques obligatoires (on peut conformer le format aux exigences de l’assurance maladie ou de l’établissement). Cela réduit les oublis (ex: mentionner les allergies, les codes de diagnostics…), car on a intégré des checks. À terme, on pourrait lier directement ces notes au DPI (Dossier Patient Informatisé) au format FHIR – notre prototype montre déjà qu’on extrait des données structurées (allergies, médicaments) qu’on pourrait facilement mapper dans un compte-rendu au format HL7 ou autre.
+Adaptabilité : l’usage de modèles open et le fine-tuning facile signifient que la solution peut être personnalisée. Par exemple, on peut envisager de l’affiner pour chaque spécialité (un dermatologue n’a pas les mêmes besoins rédactionnels qu’un généraliste). Voire, à terme, que l’assistant apprenne le style individuel du médecin (certains écrivent des phrases courtes, d’autres de longs paragraphes) – la technologie de reward modeling permettrait d’ajuster cela avec les retours du praticien. Le prototype 2 jours ne va pas si loin, mais on pose l’infrastructure nécessaire (modèle local ajustable, pipeline modulable).
+En somme, en deux jours, nous aurons construit une ébauche fonctionnelle de scribe médical virtuel : elle prouve qu’avec les bons outils open source, on peut prototyper très rapidement une solution d’IA générative utile en santé. Cette démonstration appuiera le discours auprès des investisseurs ou partenaires : on ne parle pas d’une idée théorique, mais d’un système qui existe et qui peut être testé en conditions réelles (certes limité pour l’instant, mais pleinement extensible). C’est exactement le but d’un startup week-end : “show, don’t tell” – et nous allons montrer concrètement comment l’IA de dernière génération peut redonner du temps aux soignants tout en sécurisant leurs pratiques.
+
+
+
+
+Enrichissement du Scribe Médical Virtuel Local
+Nous allons améliorer le prototype de scribe médical virtuel local en y ajoutant une interface utilisateur, un module de NER médical, des tests unitaires et une démonstration de fine-tuning LoRA. L’objectif est de rendre le prototype plus interactif, plus précis dans l’extraction d’informations médicales, mieux testé et d’explorer comment l’adapter finement au domaine médical.
+1. Interface utilisateur (Streamlit ou Gradio)
+Objectif : Offrir une interface web simple pour utiliser le scribe médical. L’utilisateur pourra téléverser un fichier audio de consultation, lancer la transcription et la génération de compte-rendu, puis visualiser la transcription textuelle, le compte-rendu médical structuré et d’éventuels warnings (par exemple, en cas d’allergie détectée et de médicament incompatible).
+Choix de l’outil :  et  sont deux frameworks Python légers pour créer des interfaces web interactives sans développement frontend complexe.
+
+Streamlit permet de construire une app web en scriptant l’interface comme une suite d’éléments (boutons, file uploader, textes) dans un fichier Python.
+Gradio fournit des composants prédéfinis (comme gr.Audio, gr.Button, etc.) et lance une mini-app accessible via un navigateur.
+Implémentation : Nous présenterons l’interface avec Streamlit, mais une solution équivalente existe en Gradio.
+Étapes avec Streamlit :
+
+Installation : pip install streamlit. (Et éventuellement pip install streamlit.cli sur WSL.)
+Création d’une app : un fichier app.py qui définit l’interface.
+Lancement : streamlit run app.py ouvrira l’app dans le navigateur.
+Exemple de code Streamlit :
+import streamlit as st
+from transformers import pipeline
+import ollama
+
+# Chargement des modèles en amont (Whisper & LLM via Ollama)
+asr = pipeline("automatic-speech-recognition", model="openai/whisper-medium")
+# (Supposons Ollama déjà lancé avec un modèle 'mistral' dispo)
+
+st.title("🩺 Scribe Médical Virtuel")
+audio_file = st.file_uploader("Téléversez un fichier audio de consultation (.wav)", type=["wav", "mp3"])
+if audio_file is not None:
+    # 1. Transcription audio -> texte
+    st.write("🔎 Transcription en cours...")
+    transcription = asr(audio_file.name)["text"]
+    st.text_area("Transcription", transcription, height=150)
+    
+    # 2. Extraction NER & règles (on y reviendra en section NER)
+    # ...
+    
+    # 3. Génération du compte-rendu par LLM
+    prompt = f"Conversation: {transcription}\n\nRédige un compte-rendu médical structuré (SOAP)."
+    result = ollama.generate(model="mistral", prompt=prompt)
+    note = result['response']
+    
+    # 4. Validation (ex: alerte allergie)
+    # if allergy_issue: note += "\n⚠️ Alerte allergie..."
+    
+    st.subheader("Compte-rendu généré")
+    st.text_area("Note médicale", note, height=200)
+
+Explication : Ce code crée une page Streamlit avec un titre, un composant pour téléverser un fichier, puis après upload, il effectue la transcription avec Whisper (en utilisant la pipeline HF). Le texte transcrit est affiché dans une zone de texte (st.text_area). Ensuite, le code prépare un prompt pour le LLM (ici on demande un format SOAP) et utilise la bibliothèque ollama pour générer le compte-rendu avec le modèle local “mistral”. Le résultat est affiché dans une autre zone de texte. On notera qu’il faudra adapter l’intégration de la partie NER et règles (voir section suivante).
+Avec Gradio : Cela serait similaire :
+import gradio as gr
+
+def process_audio(audio):
+    transcription = asr(audio)["text"]
+    note = ollama.generate(model="mistral", prompt=f"Conversation: {transcription}\n\nNote:")["response"]
+    return transcription, note
+
+iface = gr.Interface(fn=process_audio, 
+                     inputs=gr.Audio(source="upload", type="filepath"), 
+                     outputs=[gr.Textbox(label="Transcription"), gr.Textbox(label="Compte-rendu")],
+                     title="Scribe Médical Virtuel")
+iface.launch()
+
+Ici Gradio génère automatiquement une interface avec un bouton de téléversement audio et deux zones de texte de sortie. Le code process_audio encapsule la logique.
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="insights-container">
+  <div class="insight-card">
+    <h4>✅ Avantage d'une interface</h4>
+    <p>Permet de <strong>démontrer le prototype</strong> à un public non technique (médical ou investisseur) en un clic, sans passer par la console. L’upload audio et l’affichage dynamique rendent l’outil plus tangible.</p>
+  </div>
+  <div class="insight-card">
+    <h4>⚙️ Déploiement local</h4>
+    <p>Tant Streamlit que Gradio lancent un petit serveur web local. Cela reste <strong>100% en local</strong> – aucune donnée patient n’est envoyée en externe. Pour une démo, on peut aussi héberger l’interface dans un container ou sur un intranet sécurisé.</p>
+  </div>
+  <div class="insight-card">
+    <h4>🚧 Limites</h4>
+    <p>Ces frameworks ne sont pas destinés aux applis de production lourdes, mais suffisent pour un POC. Il faut faire attention à la taille des fichiers (un audio de 5-10 min est ok, mais très long audio pourrait saturer la mémoire). On peut prévoir une <strong>barre de progression</strong> ou message d’attente sur la transcription qui peut prendre du temps.</p>
+  </div>
+
+
+
+
+2. Intégration d’un module NER médical (spaCy/scispaCy)
+Objectif : Extraire automatiquement les entités médicales importantes de la transcription : symptômes, médicaments, allergies, diagnostics, mesures (taille/poids, constantes), etc. Cela permettra de mieux structurer le compte-rendu (en passant ces infos au LLM sous forme de contexte structuré) et de détecter des éléments pour les règles (ex. repérer précisément le nom d’un médicament allergène).
+Choix de solution :
+
+est une bibliothèque NLP générale. Couplée à des modèles spécifiques (ex. med7, scispaCy), elle peut repérer des entités biomédicales.
+est un ensemble de modèles spaCy formés sur des textes scientifiques biomédicaux (articles, résumés). Ils reconnaissent notamment les maladies (DISO) et molécules/médicaments (CHEM) dans le texte libre.
+medspaCy est une suite d’extensions spaCy pour le clinique, incluant des composantes pour la négation, la contextualisation et des modèles NER (par ex. target\_matcher pour repérer des concepts cliniques via des lexiques).
+Pour un prototype rapide, une approche simple consiste à utiliser scispaCy avec le modèle NER BC5CDR (BioCreative V Chemical Disease Relation) qui identifie les entités de type Chemical (médicaments, substances) et Disease (maladies, symptômes souvent assimilés). On pourra compléter avec un lexique pour d’autres types (ex. liste de symptômes courants) si nécessaire.
+Installation :
+pip install spacy scispacy
+python -m spacy download en_core_web_sm  # modèle de base anglais (utile pour tokenizer)
+pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.0/en_ner_bc5cdr_md-0.5.0.tar.gz
+
+Le dernier pip install télécharge le modèle NER médical (taille ~500 MB). Alternativement, on peut utiliser spacy.load() directement avec l’URL.
+Utilisation (exemple code) :
+import spacy
+# Charger le pipeline scispaCy NER (modèle chimie/maladies)
+nlp = spacy.load("en_ner_bc5cdr_md")
+doc = nlp(transcription)  # transcription issue de Whisper
+entities = [(ent.text, ent.label_) for ent in doc.ents]
+print(entities)
+
+Si on prend la phrase "I have a sore throat for a week and I'm allergic to penicillin", le modèle pourrait renvoyer des entités comme [("sore throat", "DISEASE"), ("penicillin", "CHEMICAL")]. Les labels exacts du modèle BC5CDR sont DISEASE (incluant symptômes et pathologies) et CHEMICAL (médicaments, substances).
+Intégration dans le pipeline :
+
+On peut extraire du doc spaCy les éléments d’intérêt :allergies = [ent.text for ent in doc.ents if ent.label_ == "CHEMICAL" and "allerg" in doc.text.lower()] – ou plus simplement repérer des structures "allergic to X" par regex (comme on a déjà fait).
+medicaments = [ent.text for ent in doc.ents if ent.label_ == "CHEMICAL"]
+conditions = [ent.text for ent in doc.ents if ent.label_ == "DISEASE"]
+Ensuite, on peut insérer ces informations dans le prompt du LLM. Par exemple, au lieu de donner la conversation brute seulement, on ajoute un contexte structuré :
+
+context = ""
+if allergies: context += f"Allergies connues du patient : {', '.join(allergies)}.\n"
+if medicaments: context += f"Médicaments mentionnés : {', '.join(medicaments)}.\n"
+prompt = context + "Conversation:\n" + transcription + "\n\nRédigez le compte-rendu..."
+
+ Ainsi, le modèle saura explicitement que le patient a telle allergie, etc., ce qui augmente les chances qu’il en tienne compte dans la note. C’est une forme de prompt engineering basé sur NER.
+
+Alternative – med7 : Le modèle med7 est entraîné sur des dossiers cliniques et repère 7 entités : DRUG, FORM (forme galénique), DOSAGE, ROUTE (voie d’admin), FREQUENCY, DURATION, REASON. Il est très focalisé sur les médicaments. On peut l’installer via pip install med7 (ou via HuggingFace kormilitzin/en_core_med7_trf). med7 excellerait pour extraire les prescriptions (ex. "amoxicilline 500mg 3 fois/jour pendant 7 jours") d’un texte. Toutefois, dans une conversation, c’est souvent le plan qui contient ces infos, pas forcément le dialogue brut. med7 pourrait nous servir en post-traitement du compte-rendu généré pour vérifier qu’il contient bien un médicament ou pour formaliser le plan de traitement.
+Recommandation : Pour ce prototype, scispaCy BC5CDR offre un bon compromis simplicité/efficacité (couverture de larges concepts). medspaCy pourrait être exploré plus tard pour des tâches fines (négations, liaisons "allergie à X", etc.).
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="metrics-container">
+  <div class="metric-card">
+    <h4>Entités extraites</h4>
+    <div class="metric-card-value">DISO, CHEM</div>
+    <p>Le modèle BC5CDR détecte deux types principaux : maladies/symptômes (DISO) et substances/médicaments (CHEM).</p>
+  </div>
+  <div class="metric-card">
+    <h4>spaCy v3</h4>
+    <div class="metric-card-value">>= 3.5</div>
+    <p>Utiliser spaCy 3.5+ pour compatibilité avec scispaCy v0.5 (modèles 2023).</p>
+  </div>
+  <div class="metric-card">
+    <h4>Latency NER</h4>
+    <div class="metric-card-value">~0.5s/par phrase</div>
+    <p>Le modèle médian scispaCy MD (~50k vecteurs) est rapide. Sur une transcription de 1000 tokens (~consultation de 5 min), l’extraction prend ~1-2 secondes en CPU.</p>
+  </div>
+
+
+Limites NER : Aucun modèle NER ne détectera parfaitement toutes les informations clinques. Par ex., “sore throat” sera couvert comme DISEASE, mais “cough” aussi (il ne distingue pas symptôme vs maladie). Les allergies ne sont pas un type natif : on les déduira via la combinaison d’un mot clé ("allergic") et d’une entité CHEM après. Il faudra affiner le pipeline sémantique : par exemple, associer “allergic to X” => entité X est CHEM => classer X comme allergie du patient. C’est faisable via une simple recherche de "allerg" dans le texte, ou en exploitant medspaCy qui a un TargetMatcher pour ce genre de contexte. Pour un POC, une approche mixte regex+NER suffit.
+
+
+3. Ajout de tests unitaires du pipeline
+Objectif : Assurer la robustesse et la non-régression en couvrant chaque étape du pipeline par des tests automatisés. Cela permet, à chaque modification (ex. on change de modèle, on ajuste un prompt), de vérifier que tout fonctionne toujours comme attendu, et de détecter rapidement les bugs.
+Outils/références : On utilisera de préférence le module Python natif unittest ou le framework pytest pour écrire les tests. Pytest a l’avantage d’une syntaxe plus concise et d’une bonne sortie console.
+Étapes à tester :
+
+Transcription (ASR) : on peut tester la fonction de transcription sur un court audio connu. P. ex, créer un fichier hello.wav contenant "Hello world" et vérifier que le texte renvoyé contient "Hello". Ceci nécessite un petit audio d’exemple. Comme alternative (plus stable et ne nécessitant pas de fichier audio véritable), on peut simuler la sortie du module ASR en le remplaçant par une fonction factice lors du test (technique de mocking). Mais comme Whisper est relativement déterministe, tester sur un échantillon audio réel est faisable.
+Extraction NER : préparer des exemples de phrases et vérifier que l’entité attendue est bien extraite. Ex : passer "Patient allergic to penicillin." à la fonction d’extraction et s’assurer qu’on détecte "penicillin" comme allergène. De même, tester "Has fever and diabetes." et vérifier qu’on détecte "diabetes" en DISEASE.
+Génération LLM : c’est plus complexe à tester automatiquement car le langage produit peut varier. Toutefois, on peut vérifier que certaines informations clés du prompt se retrouvent dans la sortie. Par exemple, si on indique dans le prompt "Allergies: penicillin", vérifier que la réponse contient "penicillin" ou "allerg". On peut aussi faire un test de longueur (le compte-rendu doit avoir au moins X caractères). On peut éventuellement fournir un prompt très simple et connu au modèle (ex: "Répétez: Bonjour.") et vérifier la réponse exacte (mais ici on teste plus Ollama/Mistral que notre code).
+Validation règle allergie : créer un scénario artificiel où on sait que l’allergie et le médicament correspondent, et s’assurer que la fonction de validation déclenche bien le flag. Ex : simuler allergen="aspirin", meds=["aspirin"] en entrée de la fonction de validation et vérifier qu’elle retourne une alerte.
+Exemple de tests avec Pytest :
+# test_scribe_pipeline.py
+import spacy
+from my_scribe_project import transcribe_audio, extract_medical_entities, generate_note, validate_note
+
+def test_extract_allergy():
+    nlp = spacy.load("en_ner_bc5cdr_md")
+    text = "Patient is allergic to penicillin."
+    ents = extract_medical_entities(text, nlp)
+    # On s'attend à ce que 'penicillin' soit détecté comme substance (CHEM) et classé en allergie
+    assert "penicillin" in ents["allergies"]
+
+def test_validate_allergy_conflict():
+    note = "Prescribed penicillin for 7 days."
+    allergies = ["penicillin"]
+    alert = validate_note(note, allergies)
+    assert alert  # devrait être True, on a prescrit un allergène
+
+(Ici, extract_medical_entities est une fonction qu’on écrirait pour encapsuler le pipeline NER, renvoyant un dict {"allergies": [...], "meds": [...], "conditions": [...]}. validate_note renverrait True/False ou un message d’alerte.)
+On pourrait écrire un test intégré du pipeline complet :
+def test_end_to_end(tmp_path):
+    # Utilise un petit fichier audio intégré au repo de tests
+    audio_file = "samples/test_consult.wav"
+    transcription = transcribe_audio(audio_file)
+    ents = extract_medical_entities(transcription, nlp)
+    note = generate_note(transcription, ents)
+    # Check key presence
+    for symptom in ["cough", "fever"]:
+        assert symptom in transcription.lower() implies symptom in note.lower()
+    # If allergy present in transcription, it should appear in note
+    if ents["allergies"]:
+        for allergen in ents["allergies"]:
+            assert allergen.lower() in note.lower()
+
+(Pseudo-code : on vérifie que si la transcription mentionnait cough et fever, le modèle a bien noté ces symptômes. Idem pour allergie.)
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="insights-container">
+  <div class="insight-card">
+    <h4>🔄 Intégration continue</h4>
+    <p>Ces tests pourront s’exécuter automatiquement à chaque modification de code via une pipeline CI (GitHub Actions, GitLab CI...). Ainsi, si une mise à jour du modèle ou une refacto casse une fonctionnalité, on le saura immédiatement.</p>
+  </div>
+  <div class="insight-card">
+    <h4>🧪 Données de test</h4>
+    <p>Pensez à inclure dans le repository <strong>des fichiers de test</strong> : audios courts (quelques secondes) et transcriptions attendues, pour tester l’ASR. Utilisez <em>sox</em> ou un enregistrement manuel pour générer ces fichiers.</p>
+  </div>
+  <div class="insight-card">
+    <h4>📈 Mesures de qualité</h4>
+    <p>Au-delà des tests unitaires, on peut introduire des <strong>tests d’évaluation</strong> sur un petit jeu de vérité-terrain (par ex. 5 consultations fictives avec leur compte-rendu correct). On calculera alors des métriques de similarité (BLEU, ROUGE) ou demander à un médecin d’évaluer la pertinence. Ce n’est pas unitaire mais c’est essentiel pour la suite.</p>
+  </div>
+
+
+
+
+4. Fine-tuning LoRA sur des données médicales
+Objectif : Adapter le modèle de langage (Mistral/LLaMA) au style et au contenu médical, en pratiquant un affinement (fine-tuning) léger via LoRA (Low-Rank Adaptation). Cela permettra d’améliorer la qualité des comptes-rendus (par ex., utiliser le bon ton formel, structurer en sections sans oublier d'éléments, connaître les abréviations médicales courantes). Nous ferons une démonstration de fine-tuning sur un petit jeu de données pour prouver la faisabilité.
+Choix technologique : LoRA est une technique efficace où l’on entraîne seulement quelques couches additionnelles de petite taille, ce qui réduit drastiquement la VRAM et les données nécessaires. On utilisera la librairie  pour implémenter LoRA sur notre modèle.
+Jeu de données d’entraînement : L’idéal serait d’avoir des paires transcription de consultation -> compte-rendu médical correspondant. Ces données sont très difficiles à trouver en open-source (dossiers médicaux très confidentiels). Pour la démo, on peut procéder de deux manières :
+
+Synthétique : Écrire quelques scénarios de consultation (en langage courant, comme un mini script de dialogue) et rédiger manuellement le compte-rendu attendu. Par exemple, 5 dialogues différents couvrant des cas simples (rhume, mal de dos, contrôle annuel, etc.). Ce sera notre dataset d’entraînement.
+Détourné : Utiliser un dataset Q&A médical existant en le transformant en pseudo-dialogue. Par exemple, le corpus contient des paires question-réponse issues de sites du NIH. On pourrait sélectionner quelques QA pertinentes (question = motif de consultation, réponse = conseils du médecin) et les formater comme un dialogue et un compte-rendu. Ce n’est pas parfait, mais c’est une base.
+Autres sources : WikiDoc (textes encyclopédiques médicaux), i2b2/MADE (notes cliniques anonymisées – plus complexes), COVID-Dialogue (données de dialogues médicales en anglais sur le COVID, open-source). Par exemple, COVID-Dialogue (2020) contient ~200 consultations (par texte) patient-médecin en anglais, ce qui peut servir à entraîner un stylé plus conversationnel médical.
+Pour la démonstration, supposons qu’on crée un petit fichier train.jsonl avec 5 entrées :
+{"instruction": "Voici la conversation médecin-patient : [transcript]. Rédige le compte-rendu.",
+ "input": "", 
+ "output": "<s> ... compte-rendu ... </s>"}
+
+(C’est le format Alpaca/Stanford pour fine-tuner un modèle style instruct.)
+Implémentation du fine-tuning :
+Installation des libs :
+pip install transformers datasets peft accelerate
+
+Code (simplifié) utilisant PEFT/LoRA :
+from transformers import AutoModelForCausalLM, AutoTokenizer
+from peft import LoraConfig, get_peft_model
+import datasets
+
+# Charger le modèle base (ex: LLaMA-2 7B ou mistral 7B)
+model_name = "nom_du_modele_hf"
+tokenizer = AutoTokenizer.from_pretrained(model_name)
+model = AutoModelForCausalLM.from_pretrained(model_name, load_in_8bit=True, device_map="auto")
+
+# Préparer LoRA
+config = LoraConfig(r=8, lora_alpha=16, target_modules=["q_proj","v_proj"], lora_dropout=0.05)
+model = get_peft_model(model, config)
+model.print_trainable_parameters()
+# -> Doit montrer seulement ~une centaine de K de paramètres entraînables
+
+# Charger données
+data = datasets.load_dataset("json", data_files="train.jsonl")["train"]
+# Tokenizer les données
+def tokenize(batch):
+    prompt = batch["instruction"] + batch["input"]
+    target = batch["output"]
+    prompt_ids = tokenizer(prompt, truncation=True, max_length=512)["input_ids"]
+    target_ids = tokenizer(target, truncation=True, max_length=512)["input_ids"]
+    batch["input_ids"] = prompt_ids + target_ids
+    batch["labels"] = [-100]*len(prompt_ids) + target_ids
+    return batch
+train_data = data.map(tokenize, remove_columns=data.column_names)
+
+# Entraînement LoRA
+from transformers import TrainingArguments, Trainer
+training_args = TrainingArguments(
+    output_dir="./lora-med-scribe", per_device_train_batch_size=1, num_train_epochs=5, learning_rate=1e-4,
+    logging_steps=1, fp16=True
+)
+trainer = Trainer(model=model, train_dataset=train_data, args=training_args)
+trainer.train()
+model.save_pretrained("./lora-med-scribe")
+
+Ce script prend notre mini jeu train.jsonl et effectue quelques époques dessus. Avec 5 exemples, en quelques secondes c’est fini – l’objectif n’est pas d’obtenir un modèle généraliste, mais de démontrer qu’on peut affiner la façon de rédiger. Par exemple, si dans tous nos exemples on écrit "Attitude : " au lieu de "Plan : ", le modèle fine-tuné reproduira cette terminologie.
+Utilisation du modèle LoRA : Après entraînement, on peut recharger le modèle avec LoRA appliqué :
+from peft import PeftModel
+base_model = AutoModelForCausalLM.from_pretrained(model_name, device_map="auto")
+model_lora = PeftModel.from_pretrained(base_model, "./lora-med-scribe")
+# puis l'utiliser (via model_lora.generate ou via Ollama si on l'intègre autrement)
+
+Pour intégrer dans Ollama, on pourrait convertir ce modèle adapté en format Ollama (non trivial en 2 jours, on peut sinon directement utiliser HF generate).
+<style>
+        :root {
+        --accent: #464feb;
+        --timeline-ln: linear-gradient(to bottom, transparent 0%, #b0beff 15%, #b0beff 85%, transparent 100%);
+        --timeline-border: #ffffff;
+        --bg-card: #f5f7fa;
+        --bg-hover: #ebefff;
+        --text-title: #424242;
+        --text-accent: var(--accent);
+        --text-sub: #424242;
+        --radius: 12px;
+        --border: #e0e0e0;
+        --shadow: 0 2px 10px rgba(0, 0, 0, 0.06);
+        --hover-shadow: 0 4px 14px rgba(39, 16, 16, 0.1);
+        --font: "Segoe Sans", "Segoe UI", "Segoe UI Web (West European)", -apple-system, "system-ui", Roboto, "Helvetica Neue", sans-serif;
+        --overflow-wrap: break-word;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root {
+            --accent: #7385ff;
+            --timeline-ln: linear-gradient(to bottom, transparent 0%, transparent 3%, #6264a7 30%, #6264a7 50%, transparent 97%, transparent 100%);
+            --timeline-border: #424242;
+            --bg-card: #1a1a1a;
+            --bg-hover: #2a2a2a;
+            --text-title: #ffffff;
+            --text-sub: #ffffff;
+            --shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+            --hover-shadow: 0 4px 14px rgba(0, 0, 0, 0.5);
+            --border: #3d3d3d;
+        }
+    }
+
+    @media (prefers-contrast: more),
+    (forced-colors: active) {
+        :root {
+            --accent: ActiveText;
+            --timeline-ln: ActiveText;
+            --timeline-border: Canvas;
+            --bg-card: Canvas;
+            --bg-hover: Canvas;
+            --text-title: CanvasText;
+            --text-sub: CanvasText;
+            --shadow: 0 2px 10px Canvas;
+            --hover-shadow: 0 4px 14px Canvas;
+            --border: ButtonBorder;
+        }
+    }
+
+    .insights-container {
+        display: grid;
+        grid-template-columns: repeat(2,minmax(240px,1fr));
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+        margin: 0 0;
+        font-family: var(--font);
+    }
+
+    .insight-card:last-child:nth-child(odd){
+        grid-column: 1 / -1;
+    }
+
+    .insight-card {
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        box-shadow: var(--shadow);
+        min-width: 220px;
+        padding: 16px 20px 16px 20px;
+    }
+
+    .insight-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .insight-card h4 {
+        margin: 0px 0px 8px 0px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .insight-card .icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 20px;
+        height: 20px;
+        font-size: 1.1rem;
+        color: var(--text-accent);
+    }
+
+    .insight-card p {
+        font-size: 0.92rem;
+        color: var(--text-sub);
+        line-height: 1.5;
+        margin: 0px;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .insight-card p b, .insight-card p strong {
+        font-weight: 600;
+    }
+
+    .metrics-container {
+        display:grid;
+        grid-template-columns:repeat(2,minmax(210px,1fr));
+        font-family: var(--font);
+        padding: 0px 16px 0px 16px;
+        gap: 16px;
+    }
+
+    .metric-card:last-child:nth-child(odd){
+        grid-column:1 / -1; 
+    }
+
+    .metric-card {
+        flex: 1 1 210px;
+        padding: 16px;
+        background-color: var(--bg-card);
+        border-radius: var(--radius);
+        border: 1px solid var(--border);
+        text-align: center;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .metric-card:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .metric-card h4 {
+        margin: 0px;
+        font-size: 1rem;
+        color: var(--text-title);
+        font-weight: 600;
+    }
+
+    .metric-card .metric-card-value {
+        margin: 0px;
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: var(--text-accent);
+    }
+
+    .metric-card p {
+        font-size: 0.85rem;
+        color: var(--text-sub);
+        line-height: 1.45;
+        margin: 0;
+        overflow-wrap: var(--overflow-wrap);
+    }
+
+    .timeline-container {
+        position: relative;
+        margin: 0 0 0 0;
+        padding: 0px 16px 0px 56px;
+        list-style: none;
+        font-family: var(--font);
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container::before {
+        content: "";
+        position: absolute;
+        top: 0;
+        left: calc(-40px + 56px);
+        width: 2px;
+        height: 100%;
+        background: var(--timeline-ln);
+    }
+
+    .timeline-container > li {
+        position: relative;
+        margin-bottom: 16px;
+        padding: 16px 20px 16px 20px;
+        border-radius: var(--radius);
+        background: var(--bg-card);
+        border: 1px solid var(--border);
+    }
+
+    .timeline-container > li:last-child {
+        margin-bottom: 0px;
+    }
+
+    .timeline-container > li:hover {
+        background-color: var(--bg-hover);
+    }
+
+    .timeline-container > li::before {
+        content: "";
+        position: absolute;
+        top: 18px;
+        left: -40px;
+        width: 14px;
+        height: 14px;
+        background: var(--accent);
+        border: var(--timeline-border) 2px solid;
+        border-radius: 50%;
+        transform: translateX(-50%);
+        box-shadow: 0px 0px 2px 0px #00000012, 0px 4px 8px 0px #00000014;
+    }
+
+    .timeline-container > li h4 {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+    }
+
+    .timeline-container > li h4 em {
+        margin: 0 0 5px;
+        font-size: 1rem;
+        font-weight: 600;
+        color: var(--accent);
+        font-style: normal;       
+    }
+
+    .timeline-container > li * {
+        margin: 0;
+        font-size: 0.9rem;
+        color: var(--text-sub);
+        line-height: 1.4;
+    }
+
+    .timeline-container > li * b, .timeline-container > li * strong {
+        font-weight: 600;
+    }
+        @media (max-width:600px){
+      .metrics-container,
+      .insights-container{
+        grid-template-columns:1fr;
+      }
+    }
+</style>
+<div class="timeline-container">
+  <li>
+    <h4>J0 – Préparer les données</h4>
+    <p>Rédiger à la main quelques dialogues et notes associées (ou utiliser une source publique formatée). Plus c'est fidèle au style voulu, mieux c'est.</p>
+  </li>
+  <li>
+    <h4>J1 – Lancer le fine-tuning</h4>
+    <p>Utiliser un environnement GPU (local ou cloud) pour exécuter le script de fine-tuning LoRA. Avec si peu de données, quelques minutes suffisent. Surveillez la perte pour vérifier que le modèle apprend bien nos exemples.</p>
+  </li>
+  <li>
+    <h4>J1 Soir – Tester le modèle affiné</h4>
+    <p>Comparer la sortie du modèle fine-tuné à celle du modèle original sur 1 ou 2 scénarios de test. Constatez les différences de style (normalement, il devrait mieux respecter les formulations des exemples d’entraînement).</p>
+  </li>
+
+
+Exemple de résultat attendu : Si sans fine-tuning le modèle produisait un plan en anglais ou mal structuré, avec le fine-tuning il devrait suivre nos modèles. Par exemple, on lui aura montré dans les outputs d’entraînement une liste à puces pour le plan – il apprendra à faire des puces.
+Limites et recommandations :
+
+Avec si peu de données, le modèle va sans doute sur-apprendre (il risque de ressortir textuellement des bouts de nos exemples). Ce n’est pas grave pour le POC, mais pour un vrai entraînement, il faudrait des dizaines à centaines d'échantillons variés et idéalement vérifier qu’on ne divulgue pas nos données d’entraînement dans les outputs (problème de sur-apprentissage).
+Le fine-tuning modifie le modèle pour tous les usages ; or on veut conserver un modèle polyvalent. L’approche LoRA nous permet de déployer ce tuning comme une option : on peut appliquer ou non le delta LoRA à la volée. On pourrait même avoir plusieurs LoRA : un par spécialité (cardio, pédiatrie…) et les combiner si besoin.
+En termes de ressources, LoRA est léger, mais fine-tuner un 7B reste plus rapide avec une GPU. Sur CPU, c’est possible via QLoRA quantifiée 4 bits, mais c’est assez lent. En 2 jours, on peut très bien le faire sur une colab ou une machine avec une petite GPU (une T4 16GB suffit amplement ici).
+
+
+5. Limitations et évaluation
+Ressources nécessaires :
+
+CPU vs GPU: Le pipeline complet peut tourner sur CPU, mais la génération de texte par un LLM 7B sera lente (quelques secondes par phrase). Avec une GPU (même modeste type GTX 1650), on profite de l’optimisation 8-bit et c’est beaucoup plus fluide. Whisper medium tourne en ~real-time sur CPU moderne (x1 de la durée audio), plus rapide avec GPU. Le NER spaCy est rapide en CPU.
+Mémoire: Il faut ~10 Go de RAM pour charger Whisper + Mistral 7B en 8-bit, spaCy ~0.5 Go. Donc 16 Go RAM total c’est bien (notre préconisation initiale). Si la RAM est moindre, on peut employer des modèles plus petits (Whisper small ou tiny, mais transcription un peu moins précise; un LLM 3B style GPT-J, mais moins compétent).
+Jeu de données de tuning: Nos données synthétiques risquent de ne pas couvrir tous les cas. Il faudra à terme des données réelles. On pourrait chercher des collaborations pour obtenir des transcriptions anonymisées. En attendant, l’évaluation doit être prudente : ce n’est pas parce que ça marche sur nos 5 exemples que le modèle est bon sur tous les cas.
+Qualité des données :
+
+La transcription Whisper peut contenir des petites erreurs. Par exemple, confondre "dosage" et "dosage" prononcé différemment, ou mal segmenter les phrases. Cela peut induire le LLM en erreur ou l’amener à formuler une phrase un peu bizarre. Solution : on peut faire une petite post-correction de la transcription (ex: corriger "ml" en "mL", ajouter des ponctuations manquantes…). Whisper insère la ponctuation automatiquement mais c’est parfois inégal. On peut envisager d’affiner Whisper sur du speech médical (hors scope 2 jours, mais c’est une amélioration claire possible).
+Les modèles NER ne reconnaissent pas tous les concepts : ex. la température "38°C" pourrait passer inaperçue (ce n’est ni disease ni chem). On peut compléter par des regex personnalisées pour quelques motifs types (\d+°C -> Température, \d{2,3}/\d{2,3} mmHg -> tension artérielle, etc.). Ça rejoint medspaCy qui propose des RegexMatcher pour cela.
+Le fine-tuning sur peu de données peut rendre le style trop spécifique (par ex. si tous nos exemples sont de généraliste, le modèle aura du mal sur un dialogue pédiatrique). La solution est d’enrichir progressivement avec d’autres sources (ex. ajouter un exemple de pédiatrie, un de cardiologie). On peut aussi coupler du prompting instructif et du fine-tuning : par ex. garder une part de l’instruction stricte dans le prompt au lieu de tout mettre dans le modèle.
+Évaluation du système :
+
+Il faudra faire évaluer des résultats par un professionnel de santé. Par exemple, donner 10 dialogues tests et comparer nos comptes-rendus générés aux comptes-rendus écrits manuellement par un médecin. On peut mesurer la similarité textuelle (métriques de résumé type ROUGE), mais l’appréciation humaine est primordiale : vérifier qu’aucune info clée n’est manquante ou fausse, et que le style est utilisable tel quel.
+Sur l’aspect décisions médicales, notre scribe ne prend pas de décision, il ne fait que relater. Donc on n’a pas de risque d’erreur clinique type diagnostic faux (il reprendra le diagnostic du médecin tel que mentionné). C’est rassurant, et on doit le souligner. Par contre, une hallucination possible serait d’ajouter un diagnostic non discuté – ce serait une erreur grave (imaginez, la conversation ne mentionne pas le diabète du patient et l’IA le rajoute parce qu’elle devine). Nos garde-fous (utiliser uniquement les infos extraites, et la vérification par renvoi au transcript comme Nabla le fait) sont cruciaux pour éviter cela. En test, on peut volontairement donner un transcript incomplet et voir si le modèle brode quelque chose d’inventé (s’il le fait, on renforce soit le prompt, soit on diminue sa liberté via un gabarit plus strict).
+
+
+6. Vision d’évolution
+En combinant ces améliorations, on se rapproche d’un assistant médical local fiable, personnalisable et intégrable. Voici comment on peut évoluer vers un système complet :
+
+Intégration SIH (Système d’Information Hospitalier) : Prévoir des connecteurs pour injecter le compte-rendu directement dans le DPI (Dossier Patient Informatisé). Par exemple, via FHIR API ou en générant un PDF signé. Également, possibilité de récupérer depuis le SIH des infos pour le contexte (antécédents enregistrés, traitements chroniques) et les injecter dans le prompt – le LLM pourrait alors les inclure sans même que le médecin ait à les redire (gain de temps).
+Personnalisation poussée :Profil praticien : permettre au médecin de configurer quelques préférences dans l’interface (par ex, langue du compte-rendu – un médecin anglophone pourrait vouloir la note en anglais même si la consult était en français; niveau de détail souhaité – minimaliste vs exhaustif). Ces préférences moduleront le prompt initial ou sélectionneront un LoRA spécifique.
+Apprentissage continu : chaque correction manuelle du médecin (ex. il modifie une phrase du compte-rendu généré) pourrait être collectée (après consentement) pour affiner le modèle sur ses données. Techniquement, on pourrait stocker toutes les paires (transcript, note finale corrigée) du médecin et périodiquement lancer un fine-tuning (ou mieux, un RLHF où le modèle propose, le médecin corrige, et on pèse sur la perte en conséquence). Cela transformerait l’outil en assistant de plus en plus personnalisé à l’utilisateur.
+Support multilingue : Whisper gère déjà plus de 50 langues. On pourrait donc étendre le scribe aux consultations en français, anglais, espagnol, etc. Il faudrait pour cela soit entraîner un modèle multilingue unique (par ex. LLaMA est multilingue, on fine-tune en laissant les différents langages), soit avoir un modèle par langue. On peut aussi transcrire dans la langue parlée puis traduire la transcription en anglais pour un modèle uniquement anglophone, mais cela ajoute une couche de complexité. Un modèle comme Mistral 7B est en fait entraîné sur plusieurs langues (c’est un corpus mixte), donc il peut déjà générer du français correct. Le fine-tuning devrait idéalement être fait dans chaque langue pour le style (on pourra translater nos mini-dataset d’entraînement dans d’autres langues comme base).
+Élargir le NER/Règles : intègre plus de connaissances médicales symboliques. Par ex, brancher une base de données de médicaments pour vérifier les posologies, ou détecter automatiquement qu’une valeur de tension est haute. On peut imaginer relier une ontologie médicale (comme SNOMED CT) pour étiqueter précisément les concepts et normaliser (ex: reconnaître que “attaque cardiaque” = “infarctus du myocarde” et coder ICD10 I21). Cela ajoute une immense valeur pour l’intégration SIH.
+Améliorer l’interface : L’interface pourrait afficher en temps réel (presque) la transcription pendant que le patient parle, afin que le médecin voie défiler les paroles (comme un sous-titre). On peut aussi imaginer un mode “mains libres” où la génération du compte-rendu se fait automatiquement en fin de consult et le médecin n’a qu’à dire “ok” ou dicter un complément.
+Sécurité et validation : Rendre le système conforme à un usage clinique réel nécessite de la validation (évaluation par des médecins sur de nombreux cas). On pourrait envisager une certification comme dispositif médical logiciel (classe I ou IIa selon la fonctionnalité) ce qui impose un suivi de la qualité, des tests rigoureux, gestion du risque. Nos ajouts de tests et de règles vont dans ce sens en pré-implantant la notion de vérifiabilité.
+Collaboration et données : Poursuivre des partenariats pour obtenir des données non sensibles est clé. Par exemple, travailler avec des étudiants en médecine pour simuler des consultations (jeux de rôles) et créer un corpus de dialogues réalistes mais factices, sur lequel entraîner l’IA. Ou utiliser des données publiques comme MIMIC-III (dossiers d’hospitalisation anonymisés) en extrayant dialogues et notes (dans MIMIC, pas de dialogues audio, mais on a des "emergency notes" qui sont proches de comptes rendus d’interrogatoires patients). Il existe aussi des datasets comme MEDIQA Chat 2023 où des dialogues patient-médecin de synthèse sont fournis avec un résumé de consultation – c’est exactement notre cas d’usage, on pourra s’en inspirer pour évaluer ou entraîner.
+En somme, l’ajout d’une interface et de modules d’IA spécialisés (NER), couplé à une méthodologie de test rigoureuse et au fine-tuning, nous place sur la voie d’un assistant vocal médical complet. L’approche locale garantit la confidentialité, et toutes ces briques restent open-source, ce qui assure maîtrise des coûts et contrôle du système. À terme, on vise un outil que chaque médecin pourra installer sur son PC sécurisé ou sur le serveur de son cabinet, et qui deviendra un véritable copilote lors des consultations : discret, fiable, et toujours aligné sur les préférences du praticien.
+
+
+7. Récapitulatif technique
+Le tableau ci-dessous résume les composants ajoutés/impliqués dans cette version enrichie du prototype, avec leur rôle et les commandes d’installation associées :
+
+Composant	Rôle / Utilité	Installation
+Streamlit	Interface web interactive (upload audio, affichage texte)	pip install streamlit
+Gradio (option)	Alternative d’interface web (widgets simplifiés)	pip install gradio
+spaCy	NLP général, utilisé pour le NER médical	pip install spacy 
+ python -m spacy download en_core_web_sm (modèle de base)
+scispaCy (modèle BC5CDR)	Modèle spaCy pour NER biomédical (substances & maladies)	pip install scispacy 
+ pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.0/en_ner_bc5cdr_md-0.5.0.tar.gz
+med7 (option)	Modèle spaCy pour NER médicaments (dose, durée, etc.)	pip install med7 
+(ou modèle HF en_core_med7_trf)
+pytest (option)	Framework de tests unitaires (alternatif à unittest)	pip install pytest
+PEFT (LoRA)	Librairie pour fine-tuning LoRA des LLM	pip install peft transformers accelerate datasets
+Jeu de données entraînement	Exemples pour fine-tuner le LLM (fichier JSONL ou aut)	(À préparer manuellement ou télécharger ex. MedQuad)
+Ollama (LLM local)	Moteur local pour exécuter Mistral/LLaMA (déjà installé dans le proto initial)	(cf. instructions initiales : brew install ollama...)
+
+En suivant ce plan d’enrichissement, on disposera d’un prototype plus complet : une interface utilisateur fonctionnelle, une compréhension fine des textes médicaux via NER, une assurance qualité par les tests, et un LLM encore mieux adapté au domaine. Toutes ces pièces sont modulaires et open-source, ce qui permet de continuer le développement de manière agile en fonction des retours du terrain et des avancées technologiques.
+
+
+
+
+
+Voici un script complet Streamlit intégrant la transcription audio avec Whisper, l’extraction d’entités médicales avec spaCy + scispaCy, et la génération de compte-rendu médical structuré via un modèle LLM local exécuté avec Ollama (ex. Mistral 7B). Ce script est prêt à être exécuté localement.
+📁 Fichier : app.py
+import streamlit as st
+from transformers import pipeline
+import spacy
+import ollama
+import tempfile
+import os
+
+# Chargement des modèles
+st.session_state.setdefault("asr", pipeline("automatic-speech-recognition", model="openai/whisper-medium", device=0))
+st.session_state.setdefault("ner", spacy.load("en_ner_bc5cdr_md"))
+
+# Fonction d'extraction d'entités médicales
+def extract_medical_entities(text, nlp_model):
+    doc = nlp_model(text)
+    entities = {"CHEMICAL": [], "DISEASE": []}
+    for ent in doc.ents:
+        if ent.label_ in entities:
+            entities[ent.label_].append(ent.text)
+    # Suppression des doublons
+    for key in entities:
+        entities[key] = list(set(entities[key]))
+    return entities
+
+# Fonction de génération du prompt
+def build_prompt(transcript, entities):
+    context = "Vous êtes un assistant médical. Rédigez un compte-rendu structuré (Subjective, Objective, Assessment, Plan).\n"
+    if entities["CHEMICAL"]:
+        context += f"Substances ou médicaments mentionnés : {', '.join(entities['CHEMICAL'])}.\n"
+    if entities["DISEASE"]:
+        context += f"Symptômes ou pathologies mentionnés : {', '.join(entities['DISEASE'])}.\n"
+    prompt = f"{context}\nConversation :\n{transcript}\n\nCompte-rendu :"
+    return prompt
+
+# Interface utilisateur
+st.title("🩺 Scribe Médical Virtuel avec NER")
+
+uploaded_file = st.file_uploader("Téléversez un fichier audio (.wav ou .mp3)", type=["wav", "mp3"])
+
+if uploaded_file is not None:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        tmp_file.write(uploaded_file.read())
+        tmp_path = tmp_file.name
+
+    st.info("⏳ Transcription en cours...")
+    transcript = st.session_statetmp_path["text"]
+    st.success("✅ Transcription terminée.")
+    st.subheader("📝 Transcription")
+    st.text_area("Texte transcrit", transcript, height=200)
+
+    st.info("🔍 Extraction des entités médicales...")
+    entities = extract_medical_entities(transcript, st.session_state["ner"])
+    st.success("✅ Entités extraites.")
+    st.subheader("🔬 Entités médicales détectées")
+    st.write("💊 Médicaments / Substances :", entities["CHEMICAL"])
+    st.write("🦠 Symptômes / Pathologies :", entities["DISEASE"])
+
+    st.info("🤖 Génération du compte-rendu médical...")
+    prompt = build_prompt(transcript, entities)
+    result = ollama.generate(model="mistral", prompt=prompt)
+    note = result["response"]
+    st.success("✅ Compte-rendu généré.")
+    st.subheader("📄 Compte-rendu médical structuré")
+    st.text_area("Note générée", note, height=300)
+
+    # Vérification allergie simple
+    allergy_flag = False
+    for allergen in entities["CHEMICAL"]:
+        if allergen.lower() in note.lower():
+            allergy_flag = True
+            st.warning(f"⚠️ Attention : le compte-rendu mentionne une substance potentiellement allergène : {allergen}")
+            break
+
+    # Nettoyage temporaire
+    os.remove(tmp_path)
+
+📦 Dépendances à installer :
+pip install streamlit transformers torch ollama spacy scispacy
+python -m spacy download en_core_web_sm
+pip install https://s3-us-west-2.amazonaws.com/ai2-s2-scispacy/releases/v0.5.0/en_ner_bc5cdr_md-0.5.0.tar.gz
+
+🚀 Lancement :
+streamlit run app.py
+
+ based on 

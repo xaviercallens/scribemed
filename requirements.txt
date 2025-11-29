@@ -1,0 +1,38 @@
+# FastAPI and server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.23
+alembic==1.12.1
+
+# Authentication & Security
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.1.1
+
+# Configuration
+pydantic==2.5.0
+pydantic-settings==2.1.0
+python-dotenv==1.0.0
+
+# Local LLM - Ollama
+ollama==0.1.7
+
+# LightLLM for efficient inference (optional)
+# lightllm==0.0.1
+
+# Whisper for local transcription
+openai-whisper==20231117
+
+# Audio processing
+pydub==0.25.1
+
+# Testing
+pytest==7.4.3
+httpx==0.25.1
+pytest-asyncio==0.21.1
+
+# Utilities
+python-dateutil==2.8.2
