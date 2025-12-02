@@ -5,7 +5,7 @@ Utilise scispaCy pour la détection d'entités biomédicales
 import spacy
 import re
 import logging
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional
 from collections import defaultdict
 
 logger = logging.getLogger(__name__)

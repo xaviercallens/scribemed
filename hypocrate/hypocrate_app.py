@@ -1,5 +1,5 @@
 """
-🏥 Hypocrate - Assistant Médical IA
+🏥 SUMY - Assistant Médical IA
 Application Streamlit principale
 """
 import streamlit as st
@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 # Configuration page
 st.set_page_config(
-    page_title="Hypocrate - Assistant Médical IA",
+    page_title="SUMY - Assistant Médical IA",
     page_icon="🏥",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -118,7 +118,9 @@ def init_session_state():
 
 def display_header():
     """Affiche l'en-tête de l'application"""
-    st.markdown('<div class="main-header">🏥 Hypocrate</div>', unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 3, 1])
+    with col2:
+        st.image("assets/sumy_logo.png", width=400)
     st.markdown('<div class="sub-header">Assistant Médical IA - 100% Local & Confidentiel</div>', unsafe_allow_html=True)
     
     # Badge de confidentialité
@@ -176,7 +178,7 @@ def display_sidebar():
         st.markdown("---")
         st.markdown("### 📚 À propos")
         st.markdown("""
-        **Hypocrate** utilise:
+        **SUMY** utilise:
         - 🎤 Whisper (transcription)
         - 🔍 scispaCy (NER médical)
         - 🤖 Llama2 (génération)
@@ -395,46 +397,356 @@ def display_results():
             st.success("✅ Lettre prête à copier")
 
 
+def display_preparation_consultation():
+    """Affiche le module de préparation de consultation"""
+    st.markdown('<div class="section-header">📋 Préparation de Consultation</div>', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns([1, 2])
+    
+    with col1:
+        st.subheader("🔍 Recherche Patient")
+        search_term = st.text_input("Nom, Prénom ou N° Dossier", placeholder="Ex: Dupont Jean")
+        
+        if st.button("🔍 Rechercher", use_container_width=True):
+            st.success("✅ Patient trouvé")
+    
+    with col2:
+        st.subheader("📁 Dossier Patient (Démo)")
+        
+        # Informations patient
+        st.markdown("**Informations générales**")
+        info_col1, info_col2, info_col3 = st.columns(3)
+        with info_col1:
+            st.metric("Âge", "45 ans")
+        with info_col2:
+            st.metric("Groupe sanguin", "A+")
+        with info_col3:
+            st.metric("Dernière visite", "Il y a 3 mois")
+        
+        # Antécédents
+        with st.expander("🏥 Antécédents médicaux", expanded=True):
+            st.markdown("""
+            - **Allergies:** Pénicilline
+            - **Maladies chroniques:** Hypertension (depuis 2018)
+            - **Chirurgies:** Appendicectomie (2010)
+            - **Traitements en cours:** Amlodipine 5mg/jour
+            """)
+        
+        # Dernières consultations
+        with st.expander("📅 Historique consultations"):
+            st.markdown("""
+            | Date | Motif | Médecin |
+            |------|-------|---------|
+            | 15/09/2024 | Contrôle TA | Dr. Martin |
+            | 12/06/2024 | Grippe | Dr. Dubois |
+            | 20/03/2024 | Bilan annuel | Dr. Martin |
+            """)
+
+
+def display_sick_leave_generator():
+    """Affiche le générateur d'arrêt maladie"""
+    st.markdown('<div class="section-header">📄 Génération Arrêt Maladie</div>', unsafe_allow_html=True)
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📝 Informations Arrêt")
+        
+        patient_name = st.text_input("Nom du patient", value="Dupont Jean")
+        diagnosis = st.text_area("Diagnostic / Motif", 
+                                 value="Syndrome grippal avec fièvre",
+                                 height=100)
+        
+        start_date = st.date_input("Date de début")
+        duration = st.number_input("Durée (jours)", min_value=1, max_value=365, value=3)
+        
+        work_accident = st.checkbox("Accident du travail")
+        prolongation = st.checkbox("Prolongation d'arrêt")
+        
+        if st.button("📄 Générer l'arrêt maladie", type="primary", use_container_width=True):
+            st.session_state.sick_leave_generated = True
+    
+    with col2:
+        st.subheader("📋 Aperçu Arrêt Maladie")
+        
+        if st.session_state.get('sick_leave_generated'):
+            st.markdown(f"""
+            <div class="info-box">
+            <h4>ARRÊT DE TRAVAIL</h4>
+            <p><strong>Patient:</strong> {patient_name}</p>
+            <p><strong>Diagnostic:</strong> {diagnosis}</p>
+            <p><strong>Période:</strong> Du {start_date} ({duration} jours)</p>
+            <p><strong>Type:</strong> {'Accident du travail' if work_accident else 'Maladie'}</p>
+            <p><strong>Médecin prescripteur:</strong> Dr. Martin</p>
+            <hr>
+            <p style="font-size: 0.9rem; color: #666;">
+            ⚠️ Document généré automatiquement - À valider par le médecin
+            </p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("📥 Télécharger PDF"):
+                st.success("✅ PDF généré (fonctionnalité démo)")
+        else:
+            st.info("👈 Remplissez le formulaire et cliquez sur 'Générer'")
+
+
+def display_patient_summary():
+    """Affiche le générateur de compte-rendu patient"""
+    st.markdown('<div class="section-header">📋 Compte-Rendu Patient</div>', unsafe_allow_html=True)
+    
+    st.info("💡 Génère un compte-rendu simplifié pour le patient à partir de la consultation")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("⚙️ Configuration")
+        
+        language_level = st.select_slider(
+            "Niveau de langage",
+            options=["Très simple", "Simple", "Standard", "Technique"],
+            value="Simple"
+        )
+        
+        include_sections = st.multiselect(
+            "Sections à inclure",
+            ["Diagnostic", "Examens réalisés", "Traitement prescrit", "Conseils", "Suivi"],
+            default=["Diagnostic", "Traitement prescrit", "Conseils"]
+        )
+        
+        if st.button("📝 Générer compte-rendu patient", type="primary", use_container_width=True):
+            st.session_state.patient_summary_generated = True
+    
+    with col2:
+        st.subheader("📄 Compte-Rendu Généré")
+        
+        if st.session_state.get('patient_summary_generated'):
+            st.markdown("""
+            <div class="success-box">
+            <h4>Votre Consultation du 02/12/2024</h4>
+            
+            <h5>🔍 Ce qui a été constaté</h5>
+            <p>Vous présentez une infection de l'oreille droite (otite moyenne aiguë). 
+            C'est une inflammation causée par des microbes.</p>
+            
+            <h5>💊 Votre traitement</h5>
+            <ul>
+            <li><strong>Azithromycine 500mg:</strong> 1 comprimé par jour pendant 3 jours</li>
+            <li><strong>Paracétamol 1g:</strong> Si douleur ou fièvre (max 3x/jour)</li>
+            </ul>
+            
+            <h5>💡 Conseils importants</h5>
+            <ul>
+            <li>Reposez-vous et évitez l'eau dans l'oreille</li>
+            <li>Prenez tous les médicaments même si vous vous sentez mieux</li>
+            <li>Revenez si pas d'amélioration dans 48h</li>
+            </ul>
+            
+            <h5>📅 Prochain rendez-vous</h5>
+            <p>Contrôle dans 1 semaine si les symptômes persistent</p>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            if st.button("📧 Envoyer par email"):
+                st.success("✅ Email envoyé (fonctionnalité démo)")
+        else:
+            st.info("👈 Configurez et générez le compte-rendu")
+
+
+def display_treatment_plan():
+    """Affiche le planificateur de traitement"""
+    st.markdown('<div class="section-header">💊 Plan de Traitement</div>', unsafe_allow_html=True)
+    
+    st.info("🎯 Génère un plan de traitement personnalisé avec suivi")
+    
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("📋 Prescription")
+        
+        # Médicaments
+        st.markdown("**Médicaments prescrits**")
+        
+        with st.expander("💊 Azithromycine 500mg", expanded=True):
+            st.write("**Posologie:** 1 comprimé/jour")
+            st.write("**Durée:** 3 jours")
+            st.write("**Moment:** Pendant le repas")
+            st.checkbox("Rappel automatique", key="med1")
+        
+        with st.expander("💊 Paracétamol 1g"):
+            st.write("**Posologie:** 1 comprimé si besoin")
+            st.write("**Max:** 3 fois par jour")
+            st.write("**Moment:** Si douleur ou fièvre")
+            st.checkbox("Rappel automatique", key="med2")
+        
+        # Examens de suivi
+        st.markdown("**Examens de suivi**")
+        exam_date = st.date_input("Date contrôle", key="exam_date")
+        st.checkbox("Audiométrie si pas d'amélioration")
+        st.checkbox("Consultation ORL si nécessaire")
+    
+    with col2:
+        st.subheader("📅 Calendrier de Suivi")
+        
+        st.markdown("""
+        <div class="info-box">
+        <h5>Planning de traitement</h5>
+        
+        <p><strong>Jour 1-3:</strong> Azithromycine 500mg</p>
+        <p style="padding-left: 20px;">✓ Matin avec petit-déjeuner</p>
+        
+        <p><strong>Si besoin:</strong> Paracétamol 1g</p>
+        <p style="padding-left: 20px;">✓ Max 3x par jour</p>
+        <p style="padding-left: 20px;">✓ Espacer de 6h minimum</p>
+        
+        <hr>
+        
+        <p><strong>📍 Jour 2:</strong> Point d'évaluation</p>
+        <p style="padding-left: 20px;">→ Amélioration des symptômes?</p>
+        
+        <p><strong>📍 Jour 7:</strong> Contrôle médecin</p>
+        <p style="padding-left: 20px;">→ Si symptômes persistent</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        if st.button("📲 Activer rappels SMS", use_container_width=True):
+            st.success("✅ Rappels activés (fonctionnalité démo)")
+        
+        if st.button("📥 Télécharger planning", use_container_width=True):
+            st.success("✅ Planning téléchargé (fonctionnalité démo)")
+
+
+def display_accounting():
+    """Affiche le module de comptabilité"""
+    st.markdown('<div class="section-header">💰 Comptabilité Cabinet</div>', unsafe_allow_html=True)
+    
+    # Statistiques du jour
+    st.subheader("📊 Aujourd'hui")
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Consultations", "12", "+2")
+    with col2:
+        st.metric("Recettes", "720 €", "+120 €")
+    with col3:
+        st.metric("Moyenne/patient", "60 €")
+    with col4:
+        st.metric("Taux remplissage", "85%")
+    
+    # Détails
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.subheader("📅 Consultations du jour")
+        st.markdown("""
+        | Heure | Patient | Type | Montant |
+        |-------|---------|------|---------|
+        | 09:00 | M. Dupont | Consultation | 25 € |
+        | 09:30 | Mme Martin | Suivi | 25 € |
+        | 10:00 | M. Bernard | Consultation | 25 € |
+        | 10:30 | Mme Petit | Certificat | 20 € |
+        | 11:00 | M. Durand | Consultation | 25 € |
+        | ... | ... | ... | ... |
+        """)
+        
+        if st.button("📥 Exporter journée", use_container_width=True):
+            st.success("✅ Export Excel généré (démo)")
+    
+    with col2:
+        st.subheader("📈 Statistiques Mois")
+        
+        # Graphique simple en texte
+        st.markdown("""
+        **Évolution recettes (30 derniers jours)**
+        ```
+        Semaine 1: ████████░░ 3,200 €
+        Semaine 2: ██████████ 3,800 €
+        Semaine 3: █████████░ 3,500 €
+        Semaine 4: ████████░░ 3,100 €
+        ```
+        
+        **Total mois:** 13,600 €  
+        **Objectif:** 15,000 € (91%)
+        """)
+        
+        st.markdown("**Répartition par type**")
+        st.markdown("""
+        - 🔵 Consultations: 65%
+        - 🟢 Suivis: 20%
+        - 🟡 Certificats: 10%
+        - 🟠 Autres: 5%
+        """)
+        
+        if st.button("📊 Rapport mensuel", use_container_width=True):
+            st.success("✅ Rapport PDF généré (démo)")
+
+
 def main():
     """Fonction principale"""
     init_session_state()
     display_header()
     config = display_sidebar()
     
-    # Zone de contrôle
-    st.markdown('<div class="section-header">🎤 Enregistrement / Upload Audio</div>', unsafe_allow_html=True)
+    # Système d'onglets
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "🎤 Consultation IA",
+        "📋 Préparation",
+        "📄 Arrêt Maladie",
+        "📋 CR Patient",
+        "💊 Plan Traitement",
+        "💰 Comptabilité"
+    ])
     
-    col1, col2 = st.columns([2, 1])
+    with tab1:
+        # Zone de contrôle
+        st.markdown('<div class="section-header">🎤 Enregistrement / Upload Audio</div>', unsafe_allow_html=True)
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            audio_file = st.file_uploader(
+                "Uploadez un fichier audio de consultation",
+                type=["wav", "mp3", "m4a", "ogg", "flac"],
+                help="Formats supportés: WAV, MP3, M4A, OGG, FLAC"
+            )
+        
+        with col2:
+            if audio_file:
+                st.audio(audio_file)
+        
+        # Bouton traitement
+        if audio_file and not st.session_state.processing:
+            if st.button("🚀 Analyser la consultation", type="primary", use_container_width=True):
+                success = process_audio(audio_file, config)
+                if success:
+                    st.balloons()
+        
+        # Affichage résultats
+        if any([st.session_state.transcript, st.session_state.entities, 
+                st.session_state.soap_note, st.session_state.letter]):
+            st.markdown("---")
+            display_results()
     
-    with col1:
-        audio_file = st.file_uploader(
-            "Uploadez un fichier audio de consultation",
-            type=["wav", "mp3", "m4a", "ogg", "flac"],
-            help="Formats supportés: WAV, MP3, M4A, OGG, FLAC"
-        )
+    with tab2:
+        display_preparation_consultation()
     
-    with col2:
-        if audio_file:
-            st.audio(audio_file)
+    with tab3:
+        display_sick_leave_generator()
     
-    # Bouton traitement
-    if audio_file and not st.session_state.processing:
-        if st.button("🚀 Analyser la consultation", type="primary", use_container_width=True):
-            success = process_audio(audio_file, config)
-            if success:
-                st.balloons()
+    with tab4:
+        display_patient_summary()
     
-    # Affichage résultats
-    if any([st.session_state.transcript, st.session_state.entities, 
-            st.session_state.soap_note, st.session_state.letter]):
-        st.markdown("---")
-        display_results()
+    with tab5:
+        display_treatment_plan()
+    
+    with tab6:
+        display_accounting()
     
     # Footer
     st.markdown("---")
     st.markdown("""
     <div style="text-align: center; color: #666; font-size: 0.9rem;">
-        <p>🏥 <strong>Hypocrate</strong> - Assistant Médical IA | 
+        <p>🏥 <strong>SUMY</strong> - Assistant Médical IA | 
         Propulsé par Whisper • scispaCy • Llama2 | 
         🔒 100% Local & Confidentiel</p>
         <p style="font-size: 0.8rem;">

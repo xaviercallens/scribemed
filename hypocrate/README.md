@@ -1,5 +1,13 @@
 # 🏥 Hypocrate - Assistant Médical IA
 
+## 🎉 STATUS : OPÉRATIONNEL ✅
+
+**L'application est prête pour les tests utilisateur !**
+
+**Accès immédiat :** http://localhost:8501
+
+👉 **[COMMENCEZ ICI - START_HERE.md](START_HERE.md)** 👈
+
 ## 📋 Vue d'ensemble
 
 **Hypocrate** est un assistant médical intelligent 100% local qui transforme les consultations médicales en documents cliniques structurés.

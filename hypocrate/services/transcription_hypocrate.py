@@ -32,8 +32,10 @@ class HypocrateTranscriptionService:
         """Détecte le meilleur device disponible"""
         if torch.cuda.is_available():
             return "cuda"
-        elif torch.backends.mps.is_available():
-            return "mps"  # Apple Silicon
+        # MPS (Apple Silicon) a des problèmes de compatibilité avec Whisper
+        # Utilisation forcée du CPU pour éviter les erreurs SparseMPS
+        # elif torch.backends.mps.is_available():
+        #     return "mps"
         return "cpu"
     
     def _load_model(self):

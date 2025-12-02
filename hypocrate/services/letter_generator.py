@@ -6,8 +6,11 @@ import logging
 import time
 from typing import Dict, Optional
 from datetime import datetime
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from ..config.prompts import build_letter_prompt, MEDICAL_SCRIBE_SYSTEM_PROMPT
+from config.prompts import build_letter_prompt, MEDICAL_SCRIBE_SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
